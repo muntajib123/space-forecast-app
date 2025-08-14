@@ -1,0 +1,25 @@
+.forecast-summary {
+  background: linear-gradient(to bottom right, #0b0f1a, #1a1f2b);
+  border: 1px solid #2e3b55;
+  border-radius: 10px;
+  padding: 24px;
+  margin: 40px auto;
+  max-width: 900px;
+  font-family: 'IBM Plex Mono', 'Courier New', Courier, monospace;
+  font-size: 15px;
+  white-space: pre-wrap;
+  color: #d0e3ff;
+  box-shadow: 0 0 12px rgba(0, 168, 255, 0.2);
+  line-height: 1.7;
+  transition: all 0.3s ease-in-out;
+}
+
+.forecast-summary:hover {
+  box-shadow: 0 0 20px rgba(0, 168, 255, 0.4);
+  transform: scale(1.01);
+}
+
+.forecast-summary pre {
+  margin: 0;
+  font-family: inherit;
+}

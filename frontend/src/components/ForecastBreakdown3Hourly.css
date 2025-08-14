@@ -1,0 +1,28 @@
+.three-hourly-table-container {
+  margin-top: 40px;
+  text-align: center;
+  background-color: #111827;
+  padding: 20px;
+  border-radius: 10px;
+  box-shadow: 0 0 10px rgba(0,255,255,0.1);
+}
+
+.three-hourly-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 20px;
+  color: #bcd3f7;
+}
+
+.three-hourly-table th,
+.three-hourly-table td {
+  padding: 10px;
+  border: 1px solid #2c354d;
+}
+
+.three-hourly-table th {
+  background-color: #1d273f;
+  color: #ffffff;
+  font-weight: 600;
+  text-transform: uppercase;
+}

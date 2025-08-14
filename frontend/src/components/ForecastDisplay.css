@@ -1,0 +1,48 @@
+.forecast-display {
+  background-color: #0b0f1a;
+  color: #e0e6ed;
+  padding: 20px;
+  border-radius: 12px;
+  margin-bottom: 40px;
+  box-shadow: 0 0 12px rgba(0, 0, 0, 0.6);
+}
+
+.section-title {
+  color: #00b3ff;
+  font-family: 'Orbitron', sans-serif;
+  font-size: 1.6rem;
+  margin-bottom: 20px;
+  text-align: center;
+  letter-spacing: 1px;
+}
+
+.forecast-table {
+  width: 100%;
+  border-collapse: collapse;
+  background-color: #111827;
+  border: 1px solid #1f2937;
+  font-family: 'Courier New', Courier, monospace;
+}
+
+.forecast-table th,
+.forecast-table td {
+  padding: 14px 16px;
+  text-align: center;
+  border: 1px solid #374151;
+}
+
+.forecast-table th {
+  background-color: #1e293b;
+  color: #60a5fa;
+  text-transform: uppercase;
+  font-size: 0.9rem;
+}
+
+.forecast-table tr:hover {
+  background-color: #1f2937;
+}
+
+.forecast-date {
+  font-size: 0.85em;
+  color: #9ca3af;
+}

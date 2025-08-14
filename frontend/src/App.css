@@ -1,0 +1,187 @@
+/* App.css - Modern NASA Theme with CoralComp Branding */
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: 'Segoe UI', 'Helvetica Neue', 'Roboto', sans-serif;
+  background-color: #0b0f1a;
+  color: #ffffff;
+}
+
+.app-container {
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 30px 20px;
+}
+
+/* Header with Logo */
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding-bottom: 20px;
+  border-bottom: 2px solid #1d90f5;
+  margin-bottom: 30px;
+}
+
+.coral-logo {
+  height: 48px;
+  width: auto;
+  filter: drop-shadow(0 0 8px #1d90f5);
+}
+
+/* Title */
+h1.forecast-heading {
+  font-size: 28px;
+  font-weight: 600;
+  color: #ffffff;
+  text-shadow: 0 0 8px #1d90f5;
+  margin: 0;
+  text-transform: uppercase;
+}
+
+/* Forecast Uploader */
+.uploader-container {
+  text-align: center;
+  margin-bottom: 30px;
+}
+
+input[type="file"] {
+  padding: 10px;
+  margin-right: 10px;
+  font-family: inherit;
+  background-color: #1a1f2f;
+  border: 1px solid #333;
+  color: #fff;
+}
+
+button.upload-btn {
+  padding: 10px 20px;
+  background-color: #1d90f5;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 0 8px rgba(29, 144, 245, 0.4);
+  transition: background-color 0.3s ease;
+}
+
+button.upload-btn:hover {
+  background-color: #1562aa;
+}
+
+/* Forecast Table */
+.forecast-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 40px;
+  background-color: #151c2e;
+  box-shadow: 0 0 8px rgba(0, 255, 255, 0.1);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.forecast-table th,
+.forecast-table td {
+  padding: 14px 16px;
+  text-align: center;
+  border-bottom: 1px solid #2c354d;
+}
+
+.forecast-table th {
+  background-color: #1d273f;
+  color: #ffffff;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.forecast-table td {
+  color: #bcd3f7;
+}
+
+.forecast-table tr:hover {
+  background-color: #202a42;
+}
+
+/* Chart Section */
+.chart-container {
+  background-color: #111827;
+  border-radius: 10px;
+  padding: 25px;
+  margin-bottom: 50px;
+  box-shadow: 0 0 10px rgba(0, 255, 255, 0.1);
+}
+
+.chart-container h2 {
+  font-size: 20px;
+  margin-bottom: 20px;
+  color: #66d9ef;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+/* Forecast Summary */
+.forecast-summary {
+  background-color: #1a1f2f;
+  border: 1px solid #333;
+  border-radius: 8px;
+  padding: 20px;
+  margin: 30px auto;
+  max-width: 960px;
+  font-family: 'Courier New', monospace;
+  font-size: 14px;
+  white-space: pre-wrap;
+  color: #d0d0d0;
+  box-shadow: 0 0 12px rgba(0, 0, 0, 0.4);
+  line-height: 1.6;
+}
+
+.forecast-summary pre {
+  margin: 0;
+}
+
+/* Loading Text */
+.loading-text {
+  text-align: center;
+  color: #888;
+  font-style: italic;
+  margin-top: 50px;
+}
+
+/* Responsive Design */
+@media screen and (max-width: 768px) {
+  .app-container {
+    padding: 20px 12px;
+  }
+
+  .app-header {
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  h1.forecast-heading {
+    font-size: 22px;
+  }
+
+  .forecast-table th,
+  .forecast-table td {
+    font-size: 12px;
+    padding: 10px;
+  }
+
+  .chart-container {
+    padding: 15px;
+  }
+
+  .chart-container h2 {
+    font-size: 16px;
+  }
+
+  .forecast-summary {
+    font-size: 12px;
+    padding: 16px;
+  }
+}
