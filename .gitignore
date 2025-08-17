@@ -1,1 +1,30 @@
-node_modules
+# Node modules (frontend)
+node_modules/
+
+# Python virtual environment (backend)
+backend/venv/
+
+# Python bytecode / cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Django / Python common files
+*.sqlite3
+*.log
+*.pot
+*.pyc
+*.pyo
+*.pyd
+*.db
+*.DS_Store
+
+# IDE / editor files
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# OS files
+Thumbs.db
+.DS_Store
