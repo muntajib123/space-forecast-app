@@ -84,18 +84,13 @@ WSGI_APPLICATION = "forecast_project.wsgi.application"
 # -----------------------------
 # Database: MongoDB (djongo)
 # -----------------------------
-# Set MONGODB_URI in Render environment variables (preferred).
-# Example (Atlas):
+# Atlas example:
 # mongodb+srv://<user>:<pass>@cluster0.xyz.mongodb.net/forecast3day?retryWrites=true&w=majority
 MONGODB_URI = os.environ.get(
     "MONGODB_URI",
-    os.environ.get(
-        "MONGO_URI",
-        "mongodb://muntajib:7081567123Muntajib@localhost:27018/forecast3day?authSource=forecast3day"
-    )
+    "mongodb://muntajib:7081567123Muntajib@localhost:27018/forecast3day?authSource=forecast3day"
 )
 
-# Optionally allow invalid TLS certs (helpful for some test clusters).
 MONGO_TLS_ALLOW_INVALID = str(
     os.environ.get("MONGO_TLS_ALLOW_INVALID", "False")
 ).lower() in ("true", "1", "yes")
@@ -103,12 +98,12 @@ MONGO_TLS_ALLOW_INVALID = str(
 DATABASES = {
     "default": {
         "ENGINE": "djongo",
-        # ✅ match the database name used in your Atlas URI
+        # ✅ database name must match Atlas DB: forecast3day
         "NAME": os.environ.get("MONGO_DBNAME", "forecast3day"),
         "ENFORCE_SCHEMA": False,
         "CLIENT": {
             "host": MONGODB_URI,
-            "tls": True if "mongodb+srv" in MONGODB_URI or os.environ.get("MONGO_TLS", "").lower() == "true" else False,
+            "tls": True,  # Atlas always requires TLS
             "tlsAllowInvalidCertificates": MONGO_TLS_ALLOW_INVALID,
         },
     }
@@ -136,7 +131,7 @@ CORS_ALLOW_ALL_ORIGINS = True
 CORS_ALLOW_CREDENTIALS = True
 
 # -----------------------------
-# Logging (send to stdout so Render captures it)
+# Logging (Render will capture stdout)
 # -----------------------------
 LOGGING = {
     "version": 1,
