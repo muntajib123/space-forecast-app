@@ -1,7 +1,9 @@
+# backend/ml_model/seed_present_forecast.py
 import os
 import sys
 import django
 from datetime import datetime
+from typing import Optional
 
 # Setup Django
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -10,7 +12,15 @@ django.setup()
 
 from forecast.models import Forecast3Day
 
-# Seed initial NOAA present forecast (example for Jul 2–4)
+def _parse_date(s: str) -> Optional[datetime.date]:
+    """Parse YYYY-MM-DD date string to a date object, return None on failure."""
+    try:
+        return datetime.strptime(str(s), "%Y-%m-%d").date()
+    except Exception as e:
+        print(f"⚠️ Invalid date '{s}': {e}")
+        return None
+
+# NOAA present_data example (Jul 2–4)
 present_data = [
     {
         "date": "2025-07-02",
@@ -41,18 +51,41 @@ present_data = [
     },
 ]
 
-# Save to database
-for entry in present_data:
-    Forecast3Day.objects.update_or_create(
-        date=entry["date"],
-        defaults={
-            "kp_index": entry["kp_index"],
-            "solar_radiation": entry["solar_radiation"],
-            "radio_blackout": entry["radio_blackout"],
-            "rationale_geomagnetic": entry["rationale_geomagnetic"],
-            "rationale_radiation": entry["rationale_radiation"],
-            "rationale_blackout": entry["rationale_blackout"],
-        }
-    )
+def seed_present_forecast(data_list):
+    saved = 0
+    for entry in data_list:
+        raw_date = entry.get("date")
+        if not raw_date:
+            print(f"⚠️ Skipping entry without 'date': {entry}")
+            continue
 
-print("✅ Seeded initial forecast data (Jul 2–4) to database.")
+        date_obj = _parse_date(raw_date)
+        if not date_obj:
+            print(f"⚠️ Skipping entry with invalid date: {entry}")
+            continue
+
+        # Build defaults dict safely (use get with fallback)
+        defaults = {
+            "kp_index": entry.get("kp_index"),
+            "solar_radiation": entry.get("solar_radiation"),
+            "radio_blackout": entry.get("radio_blackout"),
+            "rationale_geomagnetic": entry.get("rationale_geomagnetic"),
+            "rationale_radiation": entry.get("rationale_radiation"),
+            "rationale_blackout": entry.get("rationale_blackout"),
+        }
+
+        try:
+            obj, created = Forecast3Day.objects.update_or_create(
+                date=date_obj,
+                defaults=defaults
+            )
+            action = "Created" if created else "Updated"
+            print(f"✅ {action} forecast for {date_obj.isoformat()}")
+            saved += 1
+        except Exception as e:
+            print(f"❌ Error saving forecast for {date_obj.isoformat()}: {e}")
+
+    print(f"ℹ️ Seed complete. Processed {len(data_list)} entries, saved/updated {saved} entries.")
+
+if __name__ == "__main__":
+    seed_present_forecast(present_data)

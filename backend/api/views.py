@@ -1,13 +1,25 @@
 from django.http import JsonResponse
-from forecast.models import Forecast3Day
-import traceback
+from django.views.decorators.http import require_GET
+import logging
 
+from .models import Forecast3Day
+
+logger = logging.getLogger(__name__)
+
+@require_GET
 def forecast_3day(request):
     try:
-        data = list(Forecast3Day.objects.all().values())
-        return JsonResponse({"count": len(data), "data": data}, safe=False)
+        # Get all records ordered by date
+        records = list(Forecast3Day.objects.all().order_by("date").values())
+
+        # Convert date fields to string (so JSON can handle it)
+        for rec in records:
+            if "date" in rec and rec["date"] is not None:
+                rec["date"] = str(rec["date"])
+
+        logger.info(f"Returning {len(records)} forecast records")
+        return JsonResponse({"data": records}, safe=False)
+
     except Exception as e:
-        # Log the full error
-        error_message = f"{str(e)}\n{traceback.format_exc()}"
-        print("❌ Error in forecast_3day:", error_message)
-        return JsonResponse({"error": error_message})
+        logger.exception("Error fetching forecast_3day data")
+        return JsonResponse({"error": str(e)}, status=500)
