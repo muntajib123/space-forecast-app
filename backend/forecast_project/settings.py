@@ -1,4 +1,3 @@
-# settings.py (updated)
 import os
 from pathlib import Path
 
@@ -15,12 +14,11 @@ SECRET_KEY = os.environ.get(
 # DEBUG: accept 'True', 'true', '1' to enable
 DEBUG = str(os.environ.get("DEBUG", "False")).lower() in ("true", "1", "yes")
 
-# ALLOWED_HOSTS: comma separated, default to '*' (useful for quick deploys)
+# ALLOWED_HOSTS: comma separated, default to '*'
 _raw_allowed = os.environ.get("ALLOWED_HOSTS", "*")
 if _raw_allowed.strip() == "":
     ALLOWED_HOSTS = ["*"]
 else:
-    # split and strip whitespace
     ALLOWED_HOSTS = [h.strip() for h in _raw_allowed.split(",") if h.strip()]
     if not ALLOWED_HOSTS:
         ALLOWED_HOSTS = ["*"]
@@ -87,30 +85,30 @@ WSGI_APPLICATION = "forecast_project.wsgi.application"
 # Database: MongoDB (djongo)
 # -----------------------------
 # Set MONGODB_URI in Render environment variables (preferred).
-# Example (Atlas): mongodb+srv://<user>:<pass>@cluster0.xyz.mongodb.net/noaa_database?retryWrites=true&w=majority
+# Example (Atlas):
+# mongodb+srv://<user>:<pass>@cluster0.xyz.mongodb.net/forecast3day?retryWrites=true&w=majority
 MONGODB_URI = os.environ.get(
     "MONGODB_URI",
     os.environ.get(
         "MONGO_URI",
-        "mongodb://muntajib:7081567123Muntajib@localhost:27018/noaa_database?authSource=noaa_database"
+        "mongodb://muntajib:7081567123Muntajib@localhost:27018/forecast3day?authSource=forecast3day"
     )
 )
 
 # Optionally allow invalid TLS certs (helpful for some test clusters).
-# Set MONGO_TLS_ALLOW_INVALID=true only if you understand the security implications.
-MONGO_TLS_ALLOW_INVALID = str(os.environ.get("MONGO_TLS_ALLOW_INVALID", "False")).lower() in ("true", "1", "yes")
+MONGO_TLS_ALLOW_INVALID = str(
+    os.environ.get("MONGO_TLS_ALLOW_INVALID", "False")
+).lower() in ("true", "1", "yes")
 
 DATABASES = {
     "default": {
         "ENGINE": "djongo",
-        "NAME": os.environ.get("MONGO_DBNAME", "noaa_database"),
+        # ✅ match the database name used in your Atlas URI
+        "NAME": os.environ.get("MONGO_DBNAME", "forecast3day"),
         "ENFORCE_SCHEMA": False,
         "CLIENT": {
             "host": MONGODB_URI,
-            # If using Atlas SRV, djongo/pymongo negotiates TLS automatically,
-            # but we expose this option for compatibility/testing.
             "tls": True if "mongodb+srv" in MONGODB_URI or os.environ.get("MONGO_TLS", "").lower() == "true" else False,
-            # set from env if needed
             "tlsAllowInvalidCertificates": MONGO_TLS_ALLOW_INVALID,
         },
     }
@@ -157,13 +155,11 @@ LOGGING = {
         "level": "INFO" if not DEBUG else "DEBUG",
     },
     "loggers": {
-        # Django default
         "django": {
             "handlers": ["console"],
             "level": "INFO" if not DEBUG else "DEBUG",
             "propagate": False,
         },
-        # Your app
         "api": {
             "handlers": ["console"],
             "level": "DEBUG" if DEBUG else "INFO",
@@ -173,16 +169,12 @@ LOGGING = {
 }
 
 # -----------------------------
-# Helpful runtime checks / notes
+# Helpful runtime notes
 # -----------------------------
-# If you see ModuleNotFoundError: No module named 'api.models'
-#   1) ensure backend/api/models.py exists and defines Forecast3Day
-#   2) ensure api has an __init__.py (it does, according to your screenshot)
-#   3) ensure "api" is in INSTALLED_APPS (it is above)
-#
 # Environment variables to set on Render:
-#  - DJANGO_SECRET_KEY  (or SECRET_KEY)
+#  - DJANGO_SECRET_KEY (or SECRET_KEY)
 #  - DEBUG (True/False)
 #  - ALLOWED_HOSTS (comma separated)
 #  - MONGODB_URI (your Atlas connection string)
+#  - MONGO_DBNAME = forecast3day
 #  - optionally: MONGO_TLS_ALLOW_INVALID (True/False)
