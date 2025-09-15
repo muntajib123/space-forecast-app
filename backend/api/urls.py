@@ -1,11 +1,11 @@
 # backend/api/urls.py
 from django.urls import path
-from .views import health, forecast_3day
+from . import views
 
 urlpatterns = [
     # Health check endpoint
-    path("health/", health, name="health"),
+    path("health/", views.health, name="health"),
 
     # 3-day forecast endpoint
-    path("3day/", forecast_3day, name="forecast-3day"),
+    path("3day/", views.forecast_3day, name="forecast_3day"),
 ]
