@@ -1,25 +1,68 @@
+# api/views.py
+import logging
+import json
 from django.http import JsonResponse
 from django.views.decorators.http import require_GET
-import logging
 
 from .models import Forecast3Day
 
 logger = logging.getLogger(__name__)
 
+def _make_json_serializable(value):
+    """
+    Convert common non-JSON types to JSON-safe values.
+    Add more conversions here if Render logs show other types.
+    """
+    try:
+        # Common for bson ObjectId or datetime
+        from bson import ObjectId  # type: ignore
+    except Exception:
+        ObjectId = None
+
+    # datetime/date
+    try:
+        from datetime import date, datetime  # builtin
+    except Exception:
+        date = datetime = None
+
+    if ObjectId is not None and isinstance(value, ObjectId):
+        return str(value)
+    if date is not None and isinstance(value, (date, datetime)):
+        return value.isoformat()
+    # fallback
+    try:
+        json.dumps(value)
+        return value
+    except Exception:
+        return str(value)
+
+
 @require_GET
 def forecast_3day(request):
     try:
-        # Get all records ordered by date
-        records = list(Forecast3Day.objects.all().order_by("date").values())
+        qs = Forecast3Day.objects.all().order_by("date")
+        # Preferred: get simple dicts
+        try:
+            records = list(qs.values())
+        except Exception as e_values:
+            logger.warning("qs.values() failed: %s. Falling back to manual extraction.", e_values)
+            # fall back to iterating objects
+            records = []
+            for obj in qs:
+                # convert model instance to dict of fields
+                d = {}
+                for field in obj._meta.fields:
+                    name = field.name
+                    d[name] = getattr(obj, name)
+                records.append(d)
 
-        # Convert date fields to string (so JSON can handle it)
+        # Convert non-json types
         for rec in records:
-            if "date" in rec and rec["date"] is not None:
-                rec["date"] = str(rec["date"])
+            for k, v in list(rec.items()):
+                rec[k] = _make_json_serializable(v)
 
-        logger.info(f"Returning {len(records)} forecast records")
-        return JsonResponse({"data": records}, safe=False)
-
-    except Exception as e:
-        logger.exception("Error fetching forecast_3day data")
-        return JsonResponse({"error": str(e)}, status=500)
+        logger.info("Returning %d forecast records", len(records))
+        return JsonResponse({"data": records}, status=200)
+    except Exception as exc:
+        logger.exception("Unhandled error in forecast_3day")
+        return JsonResponse({"error": str(exc)}, status=500)
