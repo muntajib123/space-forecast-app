@@ -17,7 +17,11 @@ import {
 const ForecastDisplay = ({ forecast }) => {
   if (!forecast?.length) {
     return (
-      <Typography variant="body1" align="center" sx={{ color: '#ccc', mt: 2 }}>
+      <Typography
+        variant="body1"
+        align="center"
+        sx={{ color: '#555', mt: 2, fontSize: '1.2rem' }}
+      >
         No forecast data available.
       </Typography>
     );
@@ -32,22 +36,24 @@ const ForecastDisplay = ({ forecast }) => {
     return `📡 ${String(rb)}`;
   };
 
+  // ✅ Safe number formatter
+  const formatNumber = (val) =>
+    typeof val === 'number' && !isNaN(val) ? val.toFixed(2) : 'N/A';
+
   return (
     <Box
       sx={{
-        backgroundImage: "url('/space-bg.jpg')",
-        backgroundSize: 'cover',
-        backgroundPosition: 'center',
         minHeight: '100vh',
         p: { xs: 2, sm: 4 },
-        color: '#fff',
+        backgroundColor: '#f5f5f5',
+        color: '#000',
       }}
     >
       <Typography
         variant="h4"
         align="center"
         gutterBottom
-        sx={{ color: '#fff', fontWeight: 'bold' }}
+        sx={{ fontWeight: 'bold', fontSize: '2rem' }}
       >
         🌌 3-Day Space Weather Forecast
       </Typography>
@@ -58,24 +64,32 @@ const ForecastDisplay = ({ forecast }) => {
           <Grid item xs={12} sm={6} md={4} key={index}>
             <Card
               sx={{
-                backgroundColor: 'rgba(0, 0, 0, 0.75)',
-                color: '#fff',
-                boxShadow: 5,
+                backgroundColor: '#fff',
+                color: '#000',
+                boxShadow: 3,
                 borderRadius: 3,
               }}
             >
               <CardContent>
-                <Typography variant="h6">{item.day}</Typography>
-                <Typography variant="body2" sx={{ color: '#ccc' }}>
+                <Typography variant="h6" sx={{ fontSize: '1.3rem' }}>
+                  {item.day}
+                </Typography>
+                <Typography variant="body2" sx={{ color: '#666' }}>
                   {item.date}
                 </Typography>
-                <Typography mt={1}>
-                  🌡 <strong>Kp Index:</strong> {item.kp_index?.toFixed(2) ?? 'N/A'}
+                <Typography mt={1} sx={{ fontSize: '1.1rem' }}>
+                  🌡 <strong>Kp Index:</strong> {formatNumber(item.kp_index)}
                 </Typography>
-                <Typography>
-                  ☀️ <strong>Solar Radiation:</strong> {item.solar_radiation?.toFixed(2) ?? 'N/A'}
+                <Typography sx={{ fontSize: '1.1rem' }}>
+                  📊 <strong>Ap Index:</strong> {formatNumber(item.ap_index)}
                 </Typography>
-                <Typography>{formatRadioBlackout(item.radio_blackout)}</Typography>
+                <Typography sx={{ fontSize: '1.1rem' }}>
+                  ☀️ <strong>Solar Radiation:</strong>{' '}
+                  {formatNumber(item.solar_radiation)}
+                </Typography>
+                <Typography sx={{ fontSize: '1.1rem' }}>
+                  {formatRadioBlackout(item.radio_blackout)}
+                </Typography>
               </CardContent>
             </Card>
           </Grid>
@@ -87,7 +101,7 @@ const ForecastDisplay = ({ forecast }) => {
         <TableContainer
           component={Paper}
           sx={{
-            backgroundColor: 'rgba(0, 0, 0, 0.8)',
+            backgroundColor: '#fff',
             borderRadius: 2,
             overflow: 'hidden',
           }}
@@ -95,29 +109,43 @@ const ForecastDisplay = ({ forecast }) => {
           <Table>
             <TableHead>
               <TableRow>
-                <TableCell sx={{ color: '#90caf9' }}>📅 Day & Date</TableCell>
-                <TableCell sx={{ color: '#90caf9' }}>🌡 Kp Index</TableCell>
-                <TableCell sx={{ color: '#90caf9' }}>☀️ Solar Radiation</TableCell>
-                <TableCell sx={{ color: '#90caf9' }}>📡 Radio Blackout</TableCell>
+                <TableCell sx={{ color: '#1976d2', fontSize: '1rem' }}>
+                  📅 Day & Date
+                </TableCell>
+                <TableCell sx={{ color: '#1976d2', fontSize: '1rem' }}>
+                  🌡 Kp Index
+                </TableCell>
+                <TableCell sx={{ color: '#1976d2', fontSize: '1rem' }}>
+                  📊 Ap Index
+                </TableCell>
+                <TableCell sx={{ color: '#1976d2', fontSize: '1rem' }}>
+                  ☀️ Solar Radiation
+                </TableCell>
+                <TableCell sx={{ color: '#1976d2', fontSize: '1rem' }}>
+                  📡 Radio Blackout
+                </TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
               {forecast.map((item, index) => (
                 <TableRow key={index}>
-                  <TableCell sx={{ color: '#fff' }}>
+                  <TableCell sx={{ color: '#000', fontSize: '1.1rem' }}>
                     <strong>{item.day}</strong>
                     <br />
-                    <span style={{ color: '#bbb', fontSize: '0.875rem' }}>
+                    <span style={{ color: '#666', fontSize: '0.95rem' }}>
                       {item.date}
                     </span>
                   </TableCell>
-                  <TableCell sx={{ color: '#fff' }}>
-                    {item.kp_index?.toFixed(2) ?? 'N/A'}
+                  <TableCell sx={{ color: '#000', fontSize: '1.1rem' }}>
+                    {formatNumber(item.kp_index)}
                   </TableCell>
-                  <TableCell sx={{ color: '#fff' }}>
-                    {item.solar_radiation?.toFixed(2) ?? 'N/A'}
+                  <TableCell sx={{ color: '#000', fontSize: '1.1rem' }}>
+                    {formatNumber(item.ap_index)}
                   </TableCell>
-                  <TableCell sx={{ color: '#fff' }}>
+                  <TableCell sx={{ color: '#000', fontSize: '1.1rem' }}>
+                    {formatNumber(item.solar_radiation)}
+                  </TableCell>
+                  <TableCell sx={{ color: '#000', fontSize: '1.1rem' }}>
                     {formatRadioBlackout(item.radio_blackout)}
                   </TableCell>
                 </TableRow>

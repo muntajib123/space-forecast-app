@@ -1,11 +1,6 @@
-// src/components/ForecastSummary.js
-
+// ForecastSummary.js
 import React from "react";
-import {
-  Card,
-  CardContent,
-  Typography,
-} from "@mui/material";
+import { Card, CardContent, Typography, Box } from "@mui/material";
 
 const ForecastSummary = ({ data, kpBreakdown }) => {
   if (!data || data.length < 3 || kpBreakdown.length !== 24) return null;
@@ -18,10 +13,7 @@ const ForecastSummary = ({ data, kpBreakdown }) => {
   const formatDate = (date) => {
     if (!date || typeof date !== "string") return "Invalid";
     const d = new Date(date);
-    return d.toLocaleDateString("en-US", {
-      day: "2-digit",
-      month: "short",
-    });
+    return d.toLocaleDateString("en-US", { day: "2-digit", month: "short" });
   };
 
   const utSlots = [
@@ -41,11 +33,11 @@ const ForecastSummary = ({ data, kpBreakdown }) => {
     <Card
       sx={{
         mt: 4,
-        backgroundColor: "#1a1a1a",
-        color: "#fff",
-        padding: 2,
-        whiteSpace: "pre-wrap",
-        boxShadow: 3
+        backgroundColor: "#fafafa", // soft light bg
+        color: "#000",
+        p: 3,
+        boxShadow: 4,
+        borderRadius: 3,
       }}
     >
       <CardContent>
@@ -54,8 +46,10 @@ const ForecastSummary = ({ data, kpBreakdown }) => {
           component="div"
           sx={{
             fontFamily: "monospace",
-            fontSize: "0.95rem",
-            color: "#d1d5db"
+            fontSize: "1rem",
+            whiteSpace: "pre-wrap",
+            color: "#222",
+            lineHeight: 1.6,
           }}
         >
 {`
@@ -64,15 +58,49 @@ const ForecastSummary = ({ data, kpBreakdown }) => {
 
 A. Geomagnetic Activity Observation and Forecast
 
-The greatest expected 3 hr Kp for ${formatDate(day1.date)}–${formatDate(day3.date)} ${year} is ${maxKp}.
+The greatest expected 3 hr Kp for ${formatDate(day1.date)}–${formatDate(day3.date)} ${year} is **${maxKp}**.
 
 Kp Index Breakdown: ${formatDate(day1.date)}–${formatDate(day3.date)} ${year}
+`}
+        </Typography>
 
-                ${day1.date.padEnd(18)}${day2.date.padEnd(18)}${day3.date}
-${utSlots.map((slot, i) =>
-  `${slot.padEnd(16)}${formatKp(kpMatrix[0][i])}               ${formatKp(kpMatrix[1][i])}               ${formatKp(kpMatrix[2][i])}`
-).join("\n")}
+        {/* Table-style Kp breakdown */}
+        <Box
+          component="table"
+          sx={{
+            width: "100%",
+            mt: 2,
+            mb: 3,
+            borderCollapse: "collapse",
+            fontFamily: "monospace",
+            fontSize: "0.95rem",
+          }}
+        >
+          <thead>
+            <tr>
+              <th></th>
+              <th>{formatDate(day1.date)}</th>
+              <th>{formatDate(day2.date)}</th>
+              <th>{formatDate(day3.date)}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {utSlots.map((slot, i) => (
+              <tr key={i}>
+                <td style={{ padding: "4px 8px", fontWeight: 600 }}>{slot}</td>
+                <td style={{ padding: "4px 8px" }}>{formatKp(kpMatrix[0][i])}</td>
+                <td style={{ padding: "4px 8px" }}>{formatKp(kpMatrix[1][i])}</td>
+                <td style={{ padding: "4px 8px" }}>{formatKp(kpMatrix[2][i])}</td>
+              </tr>
+            ))}
+          </tbody>
+        </Box>
 
+        <Typography
+          variant="body2"
+          sx={{ fontFamily: "monospace", fontSize: "1rem", whiteSpace: "pre-wrap" }}
+        >
+{`
 Rationale: Based on ML forecast, geomagnetic activity is expected to vary through the period.
 
 B. Solar Radiation Activity Observation and Forecast

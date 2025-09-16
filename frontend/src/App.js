@@ -11,50 +11,46 @@ import {
   CircularProgress,
   Box,
   AppBar,
-  Toolbar,
+  Toolbar
 } from '@mui/material';
+
+import { createTheme, ThemeProvider } from '@mui/material/styles';
 
 function App() {
   const [forecastData, setForecastData] = useState([]);
   const [kpHourly, setKpHourly] = useState([]);
+  const [apHourly, setApHourly] = useState([]);
+
+  const lightTheme = createTheme({
+    palette: {
+      mode: 'light',
+      primary: { main: '#1976d2' },
+      secondary: { main: '#dc004e' },
+      background: {
+        default: '#f5f5f5',
+        paper: '#fff',
+      },
+      text: {
+        primary: '#000',
+        secondary: '#333',
+      },
+    },
+    typography: {
+      fontSize: 16,
+      h1: { fontSize: '2rem' },
+      h2: { fontSize: '1.5rem' },
+      body1: { fontSize: '1.1rem' },
+    },
+  });
 
   useEffect(() => {
     const today = new Date();
-
-    // Map radio blackout levels to numeric severity for plotting
-    const rbSeverityMap = {
-      None: 0,
-      Minor: 1,
-      Moderate: 2,
-      Severe: 3,
-      Extreme: 4
-    };
+    const rbSeverityMap = { None: 0, Minor: 1, Moderate: 2, Severe: 3, Extreme: 4 };
 
     const predictedData = [
-      {
-        kp_index: 3.454,
-        solar_radiation: 1.771,
-        radio_blackout: {
-          "R1-R2": "Minor",
-          "R3 or greater": "None"
-        }
-      },
-      {
-        kp_index: 4.655,
-        solar_radiation: 1.72,
-        radio_blackout: {
-          "R1-R2": "Minor",
-          "R3 or greater": "None"
-        }
-      },
-      {
-        kp_index: 5.677,
-        solar_radiation: 1.72,
-        radio_blackout: {
-          "R1-R2": "Minor",
-          "R3 or greater": "None"
-        }
-      },
+      { kp_index: 3.454, solar_radiation: 1.771, radio_blackout: { "R1-R2": "Minor", "R3 or greater": "None" } },
+      { kp_index: 4.655, solar_radiation: 1.72, radio_blackout: { "R1-R2": "Minor", "R3 or greater": "None" } },
+      { kp_index: 5.677, solar_radiation: 1.72, radio_blackout: { "R1-R2": "Minor", "R3 or greater": "None" } },
     ];
 
     const kpHourlyPredicted = [
@@ -66,12 +62,22 @@ function App() {
 
     setKpHourly(kpHourlyPredicted);
 
+    const apHourlyPredicted = kpHourlyPredicted.map(kp => Math.round((kp * 10) / 3));
+    setApHourly(apHourlyPredicted);
+
+    const apDaily = [
+      apHourlyPredicted.slice(0, 8).reduce((a, b) => a + b, 0) / 8,
+      apHourlyPredicted.slice(8, 16).reduce((a, b) => a + b, 0) / 8,
+      apHourlyPredicted.slice(16, 24).reduce((a, b) => a + b, 0) / 8
+    ];
+
     const formattedData = predictedData.map((item, index) => {
       const forecastDate = new Date(today);
       forecastDate.setDate(today.getDate() + index + 1);
 
       return {
         ...item,
+        ap_index: apDaily[index],
         day: `Day ${index + 1}`,
         date: forecastDate.toDateString(),
         iso: forecastDate.toISOString().split("T")[0],
@@ -81,43 +87,57 @@ function App() {
       };
     });
 
-    console.log("🚀 Setting forecast data:", formattedData);
     setForecastData(formattedData);
   }, []);
 
   return (
-    <Container maxWidth="lg">
-      <AppBar position="static" color="primary">
-        <Toolbar>
-          <img
-            src="/coralcomp-logo.png"
-            alt="CoralComp Logo"
-            style={{ height: 50, marginRight: 16 }}
-          />
-          <Typography variant="h6" component="div">
-            3-Day Space Weather Forecast
-          </Typography>
-        </Toolbar>
-      </AppBar>
+    <ThemeProvider theme={lightTheme}>
+      <Container maxWidth="lg">
 
-      <Box mt={4}>
-        {forecastData.length > 0 ? (
-          <>
-            <ForecastDisplay forecast={forecastData} />
-            <ForecastGraphs data={forecastData} />
-            <ForecastSummary data={forecastData} kpBreakdown={kpHourly} />
-            <ForecastBreakdown3Hourly kpIndex={kpHourly} />
-          </>
-        ) : (
-          <Box display="flex" justifyContent="center" mt={5}>
-            <CircularProgress />
-            <Typography variant="body1" ml={2}>
-              Loading forecast...
+        {/* ✅ Navbar with CoralComp logo + centered title */}
+        <AppBar position="static" color="primary">
+          <Toolbar sx={{ display: "flex", justifyContent: "space-between" }}>
+            {/* Logo on left */}
+            <Box
+              component="img"
+              src="/coralcomp-logo.png"
+              alt="CoralComp Logo"
+              sx={{ height: 50 }}
+            />
+
+            {/* Title centered */}
+            <Typography
+              variant="h6"
+              component="div"
+              sx={{ flexGrow: 1, textAlign: "center", fontWeight: "bold" }}
+            >
+              3-Day Space Weather Forecast
             </Typography>
-          </Box>
-        )}
-      </Box>
-    </Container>
+
+            {/* Spacer to balance layout */}
+            <Box sx={{ width: 50 }} />
+          </Toolbar>
+        </AppBar>
+
+        <Box mt={4}>
+          {forecastData.length > 0 ? (
+            <>
+              <ForecastDisplay forecast={forecastData} />
+              <ForecastGraphs data={forecastData} />
+              <ForecastSummary data={forecastData} kpBreakdown={kpHourly} />
+              <ForecastBreakdown3Hourly kpIndex={kpHourly} apIndex={apHourly} />
+            </>
+          ) : (
+            <Box display="flex" justifyContent="center" mt={5}>
+              <CircularProgress />
+              <Typography variant="body1" ml={2}>
+                Loading forecast...
+              </Typography>
+            </Box>
+          )}
+        </Box>
+      </Container>
+    </ThemeProvider>
   );
 }
 

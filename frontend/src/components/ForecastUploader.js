@@ -10,6 +10,7 @@ import {
   LinearProgress,
   Box
 } from '@mui/material';
+import { API_URL } from '../config'; // ✅ use centralized API_URL
 
 const ForecastUploader = ({ onUploadSuccess = () => {} }) => {
   const [uploading, setUploading] = useState(false);
@@ -23,19 +24,24 @@ const ForecastUploader = ({ onUploadSuccess = () => {} }) => {
     reader.onload = async (event) => {
       try {
         setUploading(true);
+
+        // parse JSON file
         const raw = JSON.parse(event.target.result);
         const dataArray = Array.isArray(raw) ? raw : [raw];
 
+        // POST each entry to the correct API endpoint
         await Promise.all(
           dataArray.map((entry) =>
-            axios.post('http://127.0.0.1:8000/api/forecast-3day/', entry)
+            axios.post(API_URL, entry, {
+              headers: { 'Content-Type': 'application/json' },
+            })
           )
         );
 
         alert('✅ Forecast uploaded successfully!');
         onUploadSuccess();
       } catch (error) {
-        console.error('Upload failed', error);
+        console.error('⚠️ Upload failed', error);
         alert('⚠️ Upload failed. Please check the console for details.');
       } finally {
         setUploading(false);
