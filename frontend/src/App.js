@@ -1,4 +1,4 @@
-// App.js
+// frontend/src/App.js
 import React, { useEffect, useState } from 'react';
 import ForecastDisplay from './components/ForecastDisplay';
 import ForecastGraphs from './components/ForecastGraphs';
@@ -11,12 +11,45 @@ import {
   CircularProgress,
   Box,
   AppBar,
-  Toolbar
+  Toolbar,
+  TextField,
+  Button
 } from '@mui/material';
 
 import { createTheme, ThemeProvider } from '@mui/material/styles';
 
 function App() {
+  // Password: try to read from build-time env var (set REACT_APP_SITE_PASSWORD in Vercel)
+  // If not set, change the default string below (but do not commit secrets to git).
+  const PASSWORD = process.env.REACT_APP_SITE_PASSWORD || 'coral-secret-2025';
+
+  // --- auth state for the simple client-side gate ---
+  const [unlocked, setUnlocked] = useState(false);
+  const [pwInput, setPwInput] = useState("");
+
+  // check sessionStorage on load
+  useEffect(() => {
+    try {
+      const ok = sessionStorage.getItem("site_auth") === PASSWORD;
+      if (ok) setUnlocked(true);
+    } catch (e) {
+      // sessionStorage might not be available in some contexts
+    }
+  }, [PASSWORD]);
+
+  const submitPassword = (e) => {
+    e.preventDefault();
+    if (pwInput === PASSWORD) {
+      try {
+        sessionStorage.setItem("site_auth", PASSWORD);
+      } catch (err) {}
+      setUnlocked(true);
+    } else {
+      alert("Wrong password");
+    }
+  };
+
+  // --- your existing forecast state & logic (unchanged) ---
   const [forecastData, setForecastData] = useState([]);
   const [kpHourly, setKpHourly] = useState([]);
   const [apHourly, setApHourly] = useState([]);
@@ -90,6 +123,55 @@ function App() {
     setForecastData(formattedData);
   }, []);
 
+  // If not unlocked show the password form
+  if (!unlocked) {
+    return (
+      <Box
+        sx={{
+          minHeight: "100vh",
+          display: "grid",
+          placeItems: "center",
+          bgcolor: "#f5f5f5",
+          px: 2
+        }}
+      >
+        <Box
+          component="form"
+          onSubmit={submitPassword}
+          sx={{
+            width: "100%",
+            maxWidth: 420,
+            p: 4,
+            borderRadius: 2,
+            boxShadow: 3,
+            bgcolor: "white",
+            display: "flex",
+            flexDirection: "column",
+            gap: 2
+          }}
+        >
+          <Typography variant="h6" align="center">Enter password to view app</Typography>
+          <TextField
+            type="password"
+            placeholder="Password"
+            value={pwInput}
+            onChange={(e) => setPwInput(e.target.value)}
+            fullWidth
+            autoFocus
+          />
+          <Box sx={{ display: "flex", gap: 1, justifyContent: "center", mt: 1 }}>
+            <Button variant="contained" type="submit">Enter</Button>
+            <Button variant="outlined" onClick={() => { setPwInput(""); }}>Clear</Button>
+          </Box>
+          <Typography variant="caption" align="center" sx={{ mt: 1 }}>
+            Note: this is a quick protection for demos. Do not use for sensitive production data.
+          </Typography>
+        </Box>
+      </Box>
+    );
+  }
+
+  // --- normal app render once unlocked ---
   return (
     <ThemeProvider theme={lightTheme}>
       <Container maxWidth="lg">
