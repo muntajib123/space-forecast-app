@@ -1,9 +1,17 @@
-# settings.py (complete, ready to paste)
+# settings.py (fixed — copy & paste entire file)
 import os
 from pathlib import Path
-from urllib.parse import urlparse, unquote
+from urllib.parse import urlparse
+
+# Optional: load local .env for development
+try:
+    from dotenv import load_dotenv  # pip install python-dotenv
+except Exception:
+    load_dotenv = None
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+if load_dotenv:
+    load_dotenv(BASE_DIR / ".env")
 
 # -----------------------------
 # Security / Keys
@@ -16,7 +24,7 @@ SECRET_KEY = os.environ.get(
 # DEBUG: accept 'True', 'true', '1', 'yes' to enable
 DEBUG = str(os.environ.get("DEBUG", "False")).lower() in ("true", "1", "yes")
 
-# ALLOWED_HOSTS: comma separated, default to '*'
+# ALLOWED_HOSTS: comma separated, default to '*' (use env in production)
 _raw_allowed = os.environ.get("ALLOWED_HOSTS", "*")
 if _raw_allowed.strip() == "":
     ALLOWED_HOSTS = ["*"]
@@ -37,7 +45,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
 
     # Third-party
-    "corsheaders",
+    "corsheaders",       # pip install django-cors-headers
     "rest_framework",
 
     # Local apps
@@ -86,13 +94,14 @@ WSGI_APPLICATION = "forecast_project.wsgi.application"
 # -----------------------------
 # Database: MongoDB (djongo)
 # -----------------------------
-# Expected environment variables:
-#   - MONGODB_URI  (full connection string, e.g. mongodb+srv://user:pass@cluster0.../forecast3day?...)
-#   - MONGO_DBNAME (optional, e.g. forecast3day) - if not provided we try to extract from URI
-#   - MONGO_TLS_ALLOW_INVALID (optional: True/False) - only for testing; don't use in production
+# Supported environment variables:
+#  - MONGO_URI or MONGODB_URI  (full connection string, e.g. mongodb+srv://user:pass@host/db?...)
+#  - MONGO_DBNAME (optional) - if not provided we'll try to extract from URI
+#  - MONGO_TLS_ALLOW_INVALID (optional: True/False) - only for testing
 
-# Read URI from environment (Render uses the exact variable name you created)
-MONGODB_URI = os.environ.get("MONGODB_URI", "").strip() or None
+# Prefer MONGO_URI, then MONGODB_URI
+_raw_mongo_uri = os.environ.get("MONGO_URI") or os.environ.get("MONGODB_URI")
+MONGODB_URI = _raw_mongo_uri.strip() if _raw_mongo_uri and str(_raw_mongo_uri).strip() else None
 
 # TLS invalid certificates flag (False by default)
 MONGO_TLS_ALLOW_INVALID = str(
@@ -101,24 +110,14 @@ MONGO_TLS_ALLOW_INVALID = str(
 
 def _extract_dbname_from_uri(uri: str) -> str | None:
     """
-    Try to extract the database name from a mongodb URI.
-    Examples:
-      - mongodb+srv://user:pass@host/mydb?retryWrites=true
-         -> "mydb"
-      - mongodb://user:pass@host:27017/mydb
-         -> "mydb"
-      - if no path/db in URI, returns None
+    Extract database name from a mongodb URI if present, otherwise None.
     """
     try:
-        # urlparse will put the path as '/mydb'
         parsed = urlparse(uri)
         path = parsed.path or ""
         if path.startswith("/"):
-            db = path[1:]
-            if db:
-                # remove query leftovers (shouldn't be any here)
-                db = db.split("?")[0]
-                return db
+            db = path[1:].split("?")[0]
+            return db or None
     except Exception:
         pass
     return None
@@ -132,10 +131,7 @@ if not MONGO_DBNAME and MONGODB_URI:
 if not MONGO_DBNAME:
     MONGO_DBNAME = "forecast3day"
 
-# If user supplied an Atlas style URI that included the DB name after the host,
-# djongo expects the client host to be the entire URI (including db if present).
-# We will pass the whole URI to CLIENT.host and set "NAME" to MONGO_DBNAME.
-# For Atlas SRV we enable TLS automatically.
+# If using Atlas SRV (+srv) or URI includes DB, pass full URI as host.
 _db_client_host = MONGODB_URI or f"mongodb://localhost:27017/{MONGO_DBNAME}"
 
 DATABASES = {
@@ -145,7 +141,6 @@ DATABASES = {
         "ENFORCE_SCHEMA": False,
         "CLIENT": {
             "host": _db_client_host,
-            # If using Atlas SRV or the URI includes +srv, ensure TLS True
             "tls": True if (MONGODB_URI and "mongodb+srv" in MONGODB_URI) else False,
             "tlsAllowInvalidCertificates": MONGO_TLS_ALLOW_INVALID,
         },
@@ -168,13 +163,27 @@ STATIC_ROOT = os.path.join(BASE_DIR, "staticfiles")
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # -----------------------------
-# CORS
+# CORS configuration
 # -----------------------------
-CORS_ALLOW_ALL_ORIGINS = True
-CORS_ALLOW_CREDENTIALS = True
+# Behavior:
+#  - If DEBUG=True -> allow all origins (convenient for local dev)
+#  - If DEBUG=False -> read CORS_ALLOWED_ORIGINS env var (comma separated) or fail closed
+if DEBUG:
+    CORS_ALLOW_ALL_ORIGINS = True
+    CORS_ALLOW_CREDENTIALS = True
+else:
+    CORS_ALLOW_ALL_ORIGINS = False
+    CORS_ALLOW_CREDENTIALS = True
+    # Provide CORS_ALLOWED_ORIGINS as a comma-separated env var in production.
+    _cors_allowed = os.environ.get("CORS_ALLOWED_ORIGINS", "")
+    if _cors_allowed.strip():
+        CORS_ALLOWED_ORIGINS = [u.strip() for u in _cors_allowed.split(",") if u.strip()]
+    else:
+        # If nothing set, keep empty list (block cross-origin in prod).
+        CORS_ALLOWED_ORIGINS = []
 
 # -----------------------------
-# Logging (send to stdout so Render / other PaaS captures it)
+# Logging (send to stdout so PaaS captures it)
 # -----------------------------
 LOGGING = {
     "version": 1,
@@ -209,17 +218,17 @@ LOGGING = {
 # -----------------------------
 # Helpful runtime notes (for quick debugging)
 # -----------------------------
-# - Make sure MONGODB_URI is set in your Render environment variables exactly as shown in Atlas.
-# - If your Atlas password contains special characters (like @), it must be URL-encoded.
-#   Example: password = 'P@ssw0rd' -> encoded becomes 'P%40ssw0rd'
-# - In Render, set:
-#     MONGODB_URI = mongodb+srv://username:URL_ENCODED_PASSWORD@cluster0.ixzdh.mongodb.net/forecast3day?retryWrites=true&w=majority
+# - Make sure MONGO_URI or MONGODB_URI is set in your environment.
+# - If your Atlas password contains special characters (like @), URL-encode it (e.g. '@' -> '%40').
+# - In Render / other PaaS, set:
+#     MONGODB_URI = mongodb+srv://username:URL_ENCODED_PASSWORD@cluster0.../forecast3day?retryWrites=true&w=majority
 #     MONGO_DBNAME = forecast3day
-# - If you see authentication errors in logs, check:
-#     1) DB user exists and password matches (in Atlas -> Database Access)
-#     2) Your network access allows the Render host (Atlas -> Network Access). Use 0.0.0.0/0 for testing (not recommended for production)
+# - In production set:
+#     ALLOWED_HOSTS and CORS_ALLOWED_ORIGINS environment variables (comma-separated lists)
+# - If you see authentication/network errors:
+#     1) Check Atlas -> Database Access (user exists, password correct)
+#     2) Check Atlas -> Network Access (add your host or 0.0.0.0/0 for testing)
 #
-# Quick runtime debug prints (only when DEBUG=True):
 if DEBUG:
     import logging as _logging
     _logging.getLogger("django").info("DEBUG mode on")

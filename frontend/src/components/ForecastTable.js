@@ -11,7 +11,7 @@ import {
   Paper,
   Typography
 } from '@mui/material';
-import { API_URL } from '../config'; // use centralized config
+import { API_URL } from '../config'; // make sure config.js uses "export const API_URL"
 
 const ForecastTable = () => {
   const [data, setData] = useState([]);
@@ -21,29 +21,39 @@ const ForecastTable = () => {
     async function load() {
       setLoading(true);
       try {
+        console.log('🌍 ForecastTable calling API_URL =', API_URL);
+
         const res = await fetch(API_URL);
-        if (!res.ok) throw new Error('Network response was not ok');
+        console.log('📡 Fetch status =', res.status, res.statusText);
+
+        if (!res.ok) {
+          const text = await res.text().catch(() => '<no body>');
+          console.error('⚠️ Non-OK response body:', text);
+          throw new Error('Network response was not ok');
+        }
+
         const json = await res.json();
+        console.debug(
+          '✅ Raw forecast data (first item):',
+          Array.isArray(json) ? json[0] : json?.predictions?.[0]
+        );
 
-        // The API returns an array of forecast objects
+        // Ensure array format
         const raw = Array.isArray(json) ? json : json.predictions || [];
-        console.debug('Fetched forecast raw data:', raw);
 
-        // Safety: only keep forecasts strictly after TODAY (so present-day isn't included)
-        const today = new Date();
-        const todayISO = today.toISOString().slice(0, 10); // "YYYY-MM-DD"
-
+        // Only keep future days
+        const todayISO = new Date().toISOString().slice(0, 10);
         const safe = raw
           .filter(d => typeof d.date === 'string' && d.date > todayISO)
           .sort((a, b) => a.date.localeCompare(b.date))
           .slice(0, 3)
           .map(item => {
-            // normalize kp_index array
-            const kpArr = Array.isArray(item.kp_index) ? item.kp_index : (item.kp_index || []);
+            const kpArr = Array.isArray(item.kp_index)
+              ? item.kp_index
+              : item.kp_index || [];
             const kpMax = kpArr.length ? Math.round(Math.max(...kpArr)) : null;
             const kpDisplay = kpArr.length ? kpArr.join(', ') : 'N/A';
 
-            // extract a simple solar radiation/activity value
             let activity = 'N/A';
             if (item.solar_radiation) {
               if (Array.isArray(item.solar_radiation) && item.solar_radiation.length) {
@@ -66,7 +76,7 @@ const ForecastTable = () => {
 
         setData(safe);
       } catch (err) {
-        console.error('Error fetching forecast data:', err);
+        console.error('❌ Error fetching forecast data:', err);
         setData([]);
       } finally {
         setLoading(false);
@@ -76,6 +86,7 @@ const ForecastTable = () => {
     load();
   }, []);
 
+  // Loading state
   if (loading) {
     return (
       <Box
@@ -91,7 +102,7 @@ const ForecastTable = () => {
     );
   }
 
-  // If no data, render a friendly message
+  // No data state
   if (!data.length) {
     return (
       <Box
@@ -141,7 +152,7 @@ const ForecastTable = () => {
             fontWeight: 'bold',
             borderTopLeftRadius: '16px',
             borderTopRightRadius: '16px',
-            fontSize: '1.7rem'
+            fontSize: '1.7rem',
           }}
         >
           🚀 3-Day Space Weather Forecast
