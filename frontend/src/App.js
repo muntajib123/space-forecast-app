@@ -18,12 +18,11 @@ import {
 
 import { createTheme, ThemeProvider } from "@mui/material/styles";
 
-import { fetch3DayForecast } from "./api"; // <- uses REACT_APP_API_BASE inside api.js
+import { fetch3DayForecast } from "./api"; // uses REACT_APP_API_BASE inside api.js
 
 function App() {
-  // ✅ Use REACT_APP_SITE_PASSWORD (only these are exposed in CRA builds)
-  const PASSWORD =
-    process.env.REACT_APP_SITE_PASSWORD || "coralcomp7081567123";
+  // site password (use env to change in production)
+  const PASSWORD = process.env.REACT_APP_SITE_PASSWORD || "coralcomp7081567123";
 
   const [unlocked, setUnlocked] = useState(false);
   const [pwInput, setPwInput] = useState("");
@@ -47,7 +46,7 @@ function App() {
     }
   };
 
-  // --- forecast state ---
+  // forecast state
   const [forecastData, setForecastData] = useState([]);
   const [kpHourly, setKpHourly] = useState([]);
   const [apHourly, setApHourly] = useState([]);
@@ -58,31 +57,20 @@ function App() {
       mode: "light",
       primary: { main: "#1976d2" },
       secondary: { main: "#dc004e" },
-      background: {
-        default: "#f5f5f5",
-        paper: "#fff",
-      },
-      text: {
-        primary: "#000",
-        secondary: "#333",
-      },
+      background: { default: "#f5f5f5", paper: "#fff" },
+      text: { primary: "#000", secondary: "#333" },
     },
-    typography: {
-      fontSize: 16,
-      h1: { fontSize: "2rem" },
-      h2: { fontSize: "1.5rem" },
-      body1: { fontSize: "1.1rem" },
-    },
+    typography: { fontSize: 16, h1: { fontSize: "2rem" }, h2: { fontSize: "1.5rem" }, body1: { fontSize: "1.1rem" } },
   });
 
-  // ✅ Fetch live predictions from backend (use only after unlocked)
+  // Fetch only after unlocked
   useEffect(() => {
     if (!unlocked) {
-      console.log("DEBUG: App locked, skipping fetch until unlocked");
+      console.log("DEBUG: App locked — waiting for password");
       return;
     }
 
-    console.log("DEBUG: App useEffect running (unlocked = true)");
+    console.log("DEBUG: App unlocked, starting fetch");
     console.log("DEBUG: REACT_APP_API_BASE =", process.env.REACT_APP_API_BASE);
 
     const today = new Date();
@@ -90,13 +78,15 @@ function App() {
 
     setFetchError(null);
 
-    // call helper, which uses the env var or fallback
     fetch3DayForecast()
       .then((resp) => {
         console.log("DEBUG: fetch3DayForecast response:", resp);
-        // backend returns { data: [...] } — handle both shapes
         const arr = Array.isArray(resp) ? resp : resp?.data ?? [];
-        const formattedData = arr.map((item, index) => {
+
+        // LIMIT to first 3 items for the 3-day view
+        const sliced = arr.slice(0, 3);
+
+        const formattedData = sliced.map((item, index) => {
           const forecastDate = new Date(today);
           forecastDate.setDate(today.getDate() + index + 1);
 
@@ -113,8 +103,9 @@ function App() {
 
         setForecastData(formattedData);
 
-        if (arr[0]?.kp_hourly) setKpHourly(arr[0].kp_hourly);
-        if (arr[0]?.ap_hourly) setApHourly(arr[0].ap_hourly);
+        // use hourly data from the first sliced item if available
+        if (sliced[0]?.kp_hourly) setKpHourly(sliced[0].kp_hourly);
+        if (sliced[0]?.ap_hourly) setApHourly(sliced[0].ap_hourly);
       })
       .catch((err) => {
         console.error("Error fetching forecast:", err);
@@ -122,79 +113,35 @@ function App() {
       });
   }, [unlocked]);
 
-  // 🔒 Password gate
+  // Password gate UI
   if (!unlocked) {
     return (
-      <Box
-        sx={{
-          minHeight: "100vh",
-          display: "grid",
-          placeItems: "center",
-          bgcolor: "#f5f5f5",
-          px: 2,
-        }}
-      >
+      <Box sx={{ minHeight: "100vh", display: "grid", placeItems: "center", bgcolor: "#f5f5f5", px: 2 }}>
         <Box
           component="form"
           onSubmit={submitPassword}
-          sx={{
-            width: "100%",
-            maxWidth: 420,
-            p: 4,
-            borderRadius: 2,
-            boxShadow: 3,
-            bgcolor: "white",
-            display: "flex",
-            flexDirection: "column",
-            gap: 2,
-          }}
+          sx={{ width: "100%", maxWidth: 420, p: 4, borderRadius: 2, boxShadow: 3, bgcolor: "white", display: "flex", flexDirection: "column", gap: 2 }}
         >
-          <Typography variant="h6" align="center">
-            Enter password to view app
-          </Typography>
-          <TextField
-            type="password"
-            placeholder="Password"
-            value={pwInput}
-            onChange={(e) => setPwInput(e.target.value)}
-            fullWidth
-            autoFocus
-          />
+          <Typography variant="h6" align="center">Enter password to view app</Typography>
+          <TextField type="password" placeholder="Password" value={pwInput} onChange={(e) => setPwInput(e.target.value)} fullWidth autoFocus />
           <Box sx={{ display: "flex", gap: 1, justifyContent: "center", mt: 1 }}>
-            <Button variant="contained" type="submit">
-              Enter
-            </Button>
-            <Button variant="outlined" onClick={() => setPwInput("")}>
-              Clear
-            </Button>
+            <Button variant="contained" type="submit">Enter</Button>
+            <Button variant="outlined" onClick={() => setPwInput("")}>Clear</Button>
           </Box>
-          <Typography variant="caption" align="center" sx={{ mt: 1 }}>
-            Note: this is a quick protection for demos. Do not use for sensitive production data.
-          </Typography>
+          <Typography variant="caption" align="center" sx={{ mt: 1 }}>Note: this is a quick protection for demos. Do not use for sensitive production data.</Typography>
         </Box>
       </Box>
     );
   }
 
-  // --- normal app render once unlocked ---
+  // Main app UI
   return (
     <ThemeProvider theme={lightTheme}>
       <Container maxWidth="lg">
         <AppBar position="static" color="primary">
           <Toolbar sx={{ display: "flex", justifyContent: "space-between" }}>
-            <Box
-              component="img"
-              src="/coralcomp-logo.png"
-              alt="CoralComp Logo"
-              sx={{ height: 50 }}
-            />
-            <Typography
-              variant="h6"
-              component="div"
-              sx={{ flexGrow: 1, textAlign: "center", fontWeight: "bold" }}
-            >
-              3-Day Space Weather Forecast
-            </Typography>
+            <Box component="img" src="/coralcomp-logo.png" alt="CoralComp Logo" sx={{ height: 50 }} />
+            <Typography variant="h6" component="div" sx={{ flexGrow: 1, textAlign: "center", fontWeight: "bold" }}>3-Day Space Weather Forecast</Typography>
             <Box sx={{ width: 50 }} />
           </Toolbar>
         </AppBar>
@@ -215,9 +162,7 @@ function App() {
           ) : (
             <Box display="flex" justifyContent="center" mt={5}>
               <CircularProgress />
-              <Typography variant="body1" ml={2}>
-                Loading forecast...
-              </Typography>
+              <Typography variant="body1" ml={2}>Loading forecast...</Typography>
             </Box>
           )}
         </Box>
