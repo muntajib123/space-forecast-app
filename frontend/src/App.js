@@ -21,7 +21,6 @@ import { createTheme, ThemeProvider } from "@mui/material/styles";
 import { fetch3DayForecast } from "./api"; // uses REACT_APP_API_BASE inside api.js
 
 function App() {
-  // site password (use env to change in production)
   const PASSWORD =
     process.env.REACT_APP_SITE_PASSWORD || "coralcomp7081567123";
 
@@ -47,7 +46,7 @@ function App() {
     }
   };
 
-  // forecast state
+  // state
   const [forecastData, setForecastData] = useState([]);
   const [kpHourly, setKpHourly] = useState([]);
   const [apHourly, setApHourly] = useState([]);
@@ -69,6 +68,47 @@ function App() {
     },
   });
 
+  // Helpers: numeric array + mean / max
+  const numericArray = (val) => {
+    if (val == null) return [];
+    if (Array.isArray(val)) {
+      return val
+        .map((v) => {
+          const n = Number(v);
+          return Number.isNaN(n) ? null : n;
+        })
+        .filter((n) => n !== null);
+    }
+    const n = Number(val);
+    return Number.isNaN(n) ? [] : [n];
+  };
+
+  const meanOf = (val) => {
+    const arr = numericArray(val);
+    if (!arr.length) return null;
+    return arr.reduce((a, b) => a + b, 0) / arr.length;
+  };
+
+  const maxOf = (val) => {
+    const arr = numericArray(val);
+    if (!arr.length) return null;
+    return Math.max(...arr);
+  };
+
+  // parse date helper (robust)
+  const parseDate = (item) => {
+    const raw = item?.date ?? item?.iso ?? "";
+    if (!raw) return null;
+    const d = new Date(raw);
+    if (!isNaN(d)) return d;
+    // try first 10 chars (YYYY-MM-DD)
+    if (typeof raw === "string" && raw.length >= 10) {
+      const try10 = new Date(raw.slice(0, 10));
+      if (!isNaN(try10)) return try10;
+    }
+    return null;
+  };
+
   // Fetch only after unlocked
   useEffect(() => {
     if (!unlocked) {
@@ -79,140 +119,87 @@ function App() {
     console.log("DEBUG: App unlocked, starting fetch");
     console.log("DEBUG: REACT_APP_API_BASE =", process.env.REACT_APP_API_BASE);
 
-    const today = new Date();
-    const rbSeverityMap = {
-      None: 0,
-      Minor: 1,
-      Moderate: 2,
-      Severe: 3,
-      Extreme: 4,
-    };
-
     setFetchError(null);
 
     fetch3DayForecast()
       .then((resp) => {
-        console.log("DEBUG: fetch3DayForecast response:", resp);
+        console.log("DEBUG: raw API response:", resp);
         const arr = Array.isArray(resp) ? resp : resp?.data ?? [];
 
-        // LIMIT to first 3 items for the 3-day view
-        const sliced = arr.slice(0, 3);
+        // tomorrow midnight
+        const tomorrow = new Date();
+        tomorrow.setHours(0, 0, 0, 0);
+        tomorrow.setDate(tomorrow.getDate() + 1);
 
-        const formattedData = sliced.map((item, index) => {
-          const forecastDate = new Date(today);
-          forecastDate.setDate(today.getDate() + index + 1);
+        // take only future items (>= tomorrow), sort ascending, take 3
+        const futureItems = arr
+          .map((it) => ({ it, parsed: parseDate(it) }))
+          .filter(({ parsed }) => parsed && parsed.getTime() >= tomorrow.getTime())
+          .sort((a, b) => a.parsed - b.parsed)
+          .map(({ it }) => it)
+          .slice(0, 3);
 
-          // normalize keys (kp/ap/solar may vary in backend)
-          const kp = item.kp_index ?? item.kp ?? null;
-          const ap = item.ap_index ?? item.a_index ?? item.ap ?? null;
-          const solar =
-            item.radio_flux ?? item.solar_radiation ?? item.solar ?? null;
+        // format with recommended metrics:
+        // Kp = daily peak (max), Ap = mean, Solar = mean
+        const formattedData = futureItems.map((item, idx) => {
+          const parsed = parseDate(item);
+          const forecastDate = parsed || new Date(tomorrow.getTime() + idx * 86400000);
+
+          // prefer hourly arrays, fallback to single fields
+          const kp = maxOf(item.kp_hourly ?? item.kp_index ?? item.kp ?? null);
+          const ap = meanOf(item.ap_hourly ?? item.ap_index ?? item.a_index ?? item.ap ?? null);
+          const solar = meanOf(item.radio_flux ?? item.solar_radiation ?? item.solar ?? null);
 
           return {
             ...item,
-            day: `Day ${index + 1}`,
+            day: `Day ${idx + 1}`,
             date: forecastDate.toDateString(),
             iso: forecastDate.toISOString().split("T")[0],
             kp,
             ap,
             solar,
-            radio_blackout_display: `${
-              item.radio_blackout?.["R1-R2"] ?? "None"
-            }/${item.radio_blackout?.["R3 or greater"] ?? "None"}`,
-            radio_blackout_r1_r2_numeric:
-              rbSeverityMap[item.radio_blackout?.["R1-R2"]] ?? 0,
-            radio_blackout_r3_plus_numeric:
-              rbSeverityMap[item.radio_blackout?.["R3 or greater"]] ?? 0,
+            radio_blackout_display: `${item.radio_blackout?.["R1-R2"] ?? "None"}/${item.radio_blackout?.["R3 or greater"] ?? "None"}`,
           };
         });
 
-        console.log("DEBUG: formatted forecastData:", formattedData);
+        console.log("DEBUG: formatted forecastData (future 3):", formattedData);
         setForecastData(formattedData);
 
-        // use hourly data from the first sliced item if available
-        if (sliced[0]?.kp_hourly) setKpHourly(sliced[0].kp_hourly);
-        if (sliced[0]?.ap_hourly) setApHourly(sliced[0].ap_hourly);
+        // use hourly breakdown from first future item if available
+        if (futureItems[0]?.kp_hourly) setKpHourly(futureItems[0].kp_hourly);
+        if (futureItems[0]?.ap_hourly) setApHourly(futureItems[0].ap_hourly);
       })
       .catch((err) => {
         console.error("Error fetching forecast:", err);
         setFetchError(String(err));
       });
-  }, [unlocked]);
+  }, [unlocked]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Password gate UI
   if (!unlocked) {
     return (
-      <Box
-        sx={{
-          minHeight: "100vh",
-          display: "grid",
-          placeItems: "center",
-          bgcolor: "#f5f5f5",
-          px: 2,
-        }}
-      >
-        <Box
-          component="form"
-          onSubmit={submitPassword}
-          sx={{
-            width: "100%",
-            maxWidth: 420,
-            p: 4,
-            borderRadius: 2,
-            boxShadow: 3,
-            bgcolor: "white",
-            display: "flex",
-            flexDirection: "column",
-            gap: 2,
-          }}
-        >
-          <Typography variant="h6" align="center">
-            Enter password to view app
-          </Typography>
-          <TextField
-            type="password"
-            placeholder="Password"
-            value={pwInput}
-            onChange={(e) => setPwInput(e.target.value)}
-            fullWidth
-            autoFocus
-          />
-          <Box
-            sx={{ display: "flex", gap: 1, justifyContent: "center", mt: 1 }}
-          >
-            <Button variant="contained" type="submit">
-              Enter
-            </Button>
-            <Button variant="outlined" onClick={() => setPwInput("")}>
-              Clear
-            </Button>
+      <Box sx={{ minHeight: "100vh", display: "grid", placeItems: "center", bgcolor: "#f5f5f5", px: 2 }}>
+        <Box component="form" onSubmit={submitPassword} sx={{ width: "100%", maxWidth: 420, p: 4, borderRadius: 2, boxShadow: 3, bgcolor: "white", display: "flex", flexDirection: "column", gap: 2 }}>
+          <Typography variant="h6" align="center">Enter password to view app</Typography>
+          <TextField type="password" placeholder="Password" value={pwInput} onChange={(e) => setPwInput(e.target.value)} fullWidth autoFocus />
+          <Box sx={{ display: "flex", gap: 1, justifyContent: "center", mt: 1 }}>
+            <Button variant="contained" type="submit">Enter</Button>
+            <Button variant="outlined" onClick={() => setPwInput("")}>Clear</Button>
           </Box>
-          <Typography variant="caption" align="center" sx={{ mt: 1 }}>
-            Note: this is a quick protection for demos. Do not use for sensitive
-            production data.
-          </Typography>
+          <Typography variant="caption" align="center" sx={{ mt: 1 }}>Note: this is a quick protection for demos. Do not use for sensitive production data.</Typography>
         </Box>
       </Box>
     );
   }
 
-  // Main app UI
+  // Main UI
   return (
     <ThemeProvider theme={lightTheme}>
       <Container maxWidth="lg">
         <AppBar position="static" color="primary">
           <Toolbar sx={{ display: "flex", justifyContent: "space-between" }}>
-            <Box
-              component="img"
-              src="/coralcomp-logo.png"
-              alt="CoralComp Logo"
-              sx={{ height: 50 }}
-            />
-            <Typography
-              variant="h6"
-              component="div"
-              sx={{ flexGrow: 1, textAlign: "center", fontWeight: "bold" }}
-            >
+            <Box component="img" src="/coralcomp-logo.png" alt="CoralComp Logo" sx={{ height: 50 }} />
+            <Typography variant="h6" component="div" sx={{ flexGrow: 1, textAlign: "center", fontWeight: "bold" }}>
               3-Day Space Weather Forecast
             </Typography>
             <Box sx={{ width: 50 }} />
@@ -221,34 +208,21 @@ function App() {
 
         <Box mt={4}>
           {fetchError ? (
-            <Box
-              display="flex"
-              justifyContent="center"
-              mt={5}
-              flexDirection="column"
-              alignItems="center"
-            >
+            <Box display="flex" justifyContent="center" mt={5} flexDirection="column" alignItems="center">
               <Typography color="error">Error loading forecast</Typography>
-              <Typography variant="caption" sx={{ mt: 1 }}>
-                {fetchError}
-              </Typography>
+              <Typography variant="caption" sx={{ mt: 1 }}>{fetchError}</Typography>
             </Box>
           ) : forecastData.length > 0 ? (
             <>
               <ForecastDisplay forecast={forecastData} />
               <ForecastGraphs data={forecastData} />
               <ForecastSummary data={forecastData} kpBreakdown={kpHourly} />
-              <ForecastBreakdown3Hourly
-                kpIndex={kpHourly}
-                apIndex={apHourly}
-              />
+              <ForecastBreakdown3Hourly kpIndex={kpHourly} apIndex={apHourly} />
             </>
           ) : (
             <Box display="flex" justifyContent="center" mt={5}>
               <CircularProgress />
-              <Typography variant="body1" ml={2}>
-                Loading forecast...
-              </Typography>
+              <Typography variant="body1" ml={2}>Loading forecast...</Typography>
             </Box>
           )}
         </Box>
