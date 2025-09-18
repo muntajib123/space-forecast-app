@@ -19,9 +19,12 @@ import {
 import { createTheme, ThemeProvider } from '@mui/material/styles';
 
 function App() {
-  // Password: try to read from build-time env var (set REACT_APP_SITE_PASSWORD in Vercel)
-  // If not set, change the default string below (but do not commit secrets to git).
-  const PASSWORD = process.env.REACT_APP_SITE_PASSWORD || 'coral-secret-2025';
+  // Prefer REACT_APP_SITE_PASSWORD (CRA exposes only these).
+  // Fallback to SITE_PASSWORD or a default string.
+  const PASSWORD =
+    process.env.REACT_APP_SITE_PASSWORD ||
+    process.env.SITE_PASSWORD ||
+    "coral-secret-2025";
 
   // --- auth state for the simple client-side gate ---
   const [unlocked, setUnlocked] = useState(false);
