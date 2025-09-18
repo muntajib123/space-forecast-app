@@ -1,19 +1,28 @@
-// ForecastSummary.js
+// frontend/src/components/ForecastSummary.js
 import React from "react";
 import { Card, CardContent, Typography, Box } from "@mui/material";
 
-const ForecastSummary = ({ data, kpBreakdown }) => {
-  if (!data || data.length < 3 || kpBreakdown.length !== 24) return null;
+const ForecastSummary = ({ data = [], kpBreakdown = [] }) => {
+  // if no data or kpBreakdown insufficient, still render a simple summary card
+  if (!data || data.length < 1) return null;
 
-  const [day1, day2, day3] = data;
+  // ensure kpBreakdown is 24-length array; if shorter, pad with zeros
+  const kpArr = Array.isArray(kpBreakdown) ? kpBreakdown.slice(0, 24) : [];
+  while (kpArr.length < 24) kpArr.push(0);
+
+  const [day1, day2 = {}, day3 = {}] = data;
   const issuedDate = new Date().toUTCString().slice(0, 16);
   const year = new Date().getFullYear();
 
-  const formatKp = (val) => val.toFixed(2).padStart(6, " ");
+  const formatKpCell = (val) =>
+    val === null || val === undefined || Number.isNaN(Number(val))
+      ? " N/A"
+      : Number(val).toFixed(2).padStart(6, " ");
+
   const formatDate = (date) => {
-    if (!date || typeof date !== "string") return "Invalid";
+    if (!date) return "Invalid";
     const d = new Date(date);
-    return d.toLocaleDateString("en-US", { day: "2-digit", month: "short" });
+    return isNaN(d) ? String(date) : d.toLocaleDateString("en-US", { day: "2-digit", month: "short" });
   };
 
   const utSlots = [
@@ -22,105 +31,58 @@ const ForecastSummary = ({ data, kpBreakdown }) => {
   ];
 
   const kpMatrix = [
-    kpBreakdown.slice(0, 8),
-    kpBreakdown.slice(8, 16),
-    kpBreakdown.slice(16, 24),
+    kpArr.slice(0, 8),
+    kpArr.slice(8, 16),
+    kpArr.slice(16, 24),
   ];
 
-  const maxKp = Math.max(...kpBreakdown).toFixed(2);
+  const maxKp =
+    kpArr.length > 0 ? Math.max(...kpArr.filter((v) => typeof v === "number" && !isNaN(v))) : 0;
 
   return (
-    <Card
-      sx={{
-        mt: 4,
-        backgroundColor: "#fafafa", // soft light bg
-        color: "#000",
-        p: 3,
-        boxShadow: 4,
-        borderRadius: 3,
-      }}
-    >
+    <Card sx={{ mt: 4, backgroundColor: "#fafafa", color: "#000", p: 3, boxShadow: 4, borderRadius: 3 }}>
       <CardContent>
-        <Typography
-          variant="body2"
-          component="div"
-          sx={{
-            fontFamily: "monospace",
-            fontSize: "1rem",
-            whiteSpace: "pre-wrap",
-            color: "#222",
-            lineHeight: 1.6,
-          }}
-        >
+        <Typography variant="body2" component="div" sx={{ fontFamily: "monospace", fontSize: "1rem", whiteSpace: "pre-wrap", color: "#222", lineHeight: 1.6 }}>
 {`
 :Product: 3-Day Space Weather Forecast
 :Issued: ${issuedDate} UTC
 
 A. Geomagnetic Activity Observation and Forecast
 
-The greatest expected 3 hr Kp for ${formatDate(day1.date)}–${formatDate(day3.date)} ${year} is **${maxKp}**.
+The greatest expected 3 hr Kp for ${formatDate(day1?.date)}–${formatDate(day3?.date)} ${year} is **${(maxKp || 0).toFixed(2)}**.
 
-Kp Index Breakdown: ${formatDate(day1.date)}–${formatDate(day3.date)} ${year}
+Kp Index Breakdown: ${formatDate(day1?.date)}–${formatDate(day3?.date)} ${year}
 `}
         </Typography>
 
-        {/* Table-style Kp breakdown */}
-        <Box
-          component="table"
-          sx={{
-            width: "100%",
-            mt: 2,
-            mb: 3,
-            borderCollapse: "collapse",
-            fontFamily: "monospace",
-            fontSize: "0.95rem",
-          }}
-        >
+        <Box component="table" sx={{ width: "100%", mt: 2, mb: 3, borderCollapse: "collapse", fontFamily: "monospace", fontSize: "0.95rem" }}>
           <thead>
             <tr>
               <th></th>
-              <th>{formatDate(day1.date)}</th>
-              <th>{formatDate(day2.date)}</th>
-              <th>{formatDate(day3.date)}</th>
+              <th>{formatDate(day1?.date)}</th>
+              <th>{formatDate(day2?.date)}</th>
+              <th>{formatDate(day3?.date)}</th>
             </tr>
           </thead>
           <tbody>
             {utSlots.map((slot, i) => (
               <tr key={i}>
                 <td style={{ padding: "4px 8px", fontWeight: 600 }}>{slot}</td>
-                <td style={{ padding: "4px 8px" }}>{formatKp(kpMatrix[0][i])}</td>
-                <td style={{ padding: "4px 8px" }}>{formatKp(kpMatrix[1][i])}</td>
-                <td style={{ padding: "4px 8px" }}>{formatKp(kpMatrix[2][i])}</td>
+                <td style={{ padding: "4px 8px" }}>{formatKpCell(kpMatrix[0][i])}</td>
+                <td style={{ padding: "4px 8px" }}>{formatKpCell(kpMatrix[1][i])}</td>
+                <td style={{ padding: "4px 8px" }}>{formatKpCell(kpMatrix[2][i])}</td>
               </tr>
             ))}
           </tbody>
         </Box>
 
-        <Typography
-          variant="body2"
-          sx={{ fontFamily: "monospace", fontSize: "1rem", whiteSpace: "pre-wrap" }}
-        >
+        <Typography variant="body2" sx={{ fontFamily: "monospace", fontSize: "1rem", whiteSpace: "pre-wrap" }}>
 {`
-Rationale: Based on ML forecast, geomagnetic activity is expected to vary through the period.
+Rationale: Based on model forecast.
 
 B. Solar Radiation Activity Observation and Forecast
 
-Solar Radiation Storm Forecast: ${formatDate(day1.date)}–${formatDate(day3.date)} ${year}
-
-                  ${formatDate(day1.date)}     ${formatDate(day2.date)}     ${formatDate(day3.date)}
-S1 or greater     10%            5%            5%
-
-Rationale: Solar activity is predicted to remain below major storm thresholds.
-
-C. Radio Blackout Activity and Forecast
-
-Radio Blackout Forecast: ${formatDate(day1.date)}–${formatDate(day3.date)} ${year}
-
-                  ${formatDate(day1.date)}     ${formatDate(day2.date)}     ${formatDate(day3.date)}
-R1-R2             25%            25%           25%
-R3 or greater      5%             5%            5%
-
-Rationale: Elevated background X-ray flux levels suggest a chance of R1–R2 events.
+Solar Radiation Storm Forecast: ${formatDate(day1?.date)}–${formatDate(day3?.date)} ${year}
 `}
         </Typography>
       </CardContent>
