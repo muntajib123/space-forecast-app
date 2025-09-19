@@ -68,7 +68,7 @@ function App() {
     },
   });
 
-  // Helpers: numeric array + mean / max
+  // Helpers: numeric array + mean / max (kept for backward compatibility)
   const numericArray = (val) => {
     if (val == null) return [];
     if (Array.isArray(val)) {
@@ -93,6 +93,41 @@ function App() {
     const arr = numericArray(val);
     if (!arr.length) return null;
     return Math.max(...arr);
+  };
+
+  // robust extractor used below
+  const extractNumbers = (v) => {
+    if (v == null) return [];
+    // if it's array-like (of numbers or number-strings)
+    if (Array.isArray(v)) {
+      return v
+        .map((x) => {
+          const n = Number(x);
+          return Number.isNaN(n) ? null : n;
+        })
+        .filter((n) => n !== null);
+    }
+    // if it's an object with numeric fields, try to extract numeric values
+    if (typeof v === "object") {
+      // flatten object values (depth 1)
+      const values = Object.values(v).flatMap((x) => (Array.isArray(x) ? x : [x]));
+      return values
+        .map((x) => {
+          const n = Number(x);
+          return Number.isNaN(n) ? null : n;
+        })
+        .filter((n) => n !== null);
+    }
+    // otherwise try parse as number/string
+    const n = Number(v);
+    return Number.isNaN(n) ? [] : [n];
+  };
+
+  const firstNonNull = (...args) => {
+    for (const a of args) {
+      if (a !== undefined && a !== null) return a;
+    }
+    return null;
   };
 
   // parse date helper (robust)
@@ -167,14 +202,54 @@ function App() {
         tomorrow.setHours(0, 0, 0, 0);
         tomorrow.setDate(tomorrow.getDate() + 1);
 
-        // Format chosen items
+        // --- robust numeric extraction and formatting ---
         const formattedData = fallbackChosen.map((item, idx) => {
           const parsed = parseDate(item) || new Date(tomorrow.getTime() + idx * 86400000);
           const forecastDate = parsed;
 
-          const kp = maxOf(item.kp_hourly ?? item.kp_index ?? item.kp ?? null);
-          const ap = meanOf(item.ap_hourly ?? item.ap_index ?? item.a_index ?? item.ap ?? null);
-          const solar = meanOf(item.radio_flux ?? item.solar_radiation ?? item.solar ?? null);
+          // Try many common key names & shapes for Kp/Ap/Solar
+          const kpCandidates = [
+            item.kp_hourly,
+            item.kp_index,
+            item.kp,
+            item.kp_value,
+            item.kp_max,
+            item.Kp,
+          ];
+          const apCandidates = [
+            item.ap_hourly,
+            item.ap_index,
+            item.a_index,
+            item.ap,
+            item.ap_mean,
+            item.ap_daily,
+            item.Ap,
+          ];
+          const solarCandidates = [
+            item.radio_flux,
+            item.solar_radiation,
+            item.solar,
+            item.solar_flux,
+            item.solar_mean,
+          ];
+
+          // compute kp = max of any numeric candidate arrays/values
+          let kpVals = [];
+          for (const c of kpCandidates) kpVals = kpVals.concat(extractNumbers(c));
+          const kp = kpVals.length ? Math.max(...kpVals) : null;
+
+          // compute ap = mean of any numeric candidate arrays/values
+          let apVals = [];
+          for (const c of apCandidates) apVals = apVals.concat(extractNumbers(c));
+          const ap = apVals.length ? apVals.reduce((a, b) => a + b, 0) / apVals.length : null;
+
+          // solar mean
+          let solarVals = [];
+          for (const c of solarCandidates) solarVals = solarVals.concat(extractNumbers(c));
+          const solar = solarVals.length ? solarVals.reduce((a, b) => a + b, 0) / solarVals.length : null;
+
+          // radio_blackout formatting (keep same fallback)
+          const radio_blackout_display = `${item.radio_blackout?.["R1-R2"] ?? "None"}/${item.radio_blackout?.["R3 or greater"] ?? "None"}`;
 
           return {
             ...item,
@@ -184,11 +259,14 @@ function App() {
             kp,
             ap,
             solar,
-            radio_blackout_display: `${item.radio_blackout?.["R1-R2"] ?? "None"}/${item.radio_blackout?.["R3 or greater"] ?? "None"}`,
+            radio_blackout_display,
           };
         });
 
+        // Debug: show raw chosen items + formatted output
+        console.debug("DEBUG: chosen raw items (for inspection):", fallbackChosen);
         console.log("DEBUG: formatted forecastData (future 3):", formattedData);
+
         setForecastData(formattedData);
 
         // Use hourly breakdown from the first chosen item if available; fallback to first arr item
