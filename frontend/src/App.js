@@ -33,8 +33,21 @@ function App() {
 
   const getApFromKp = (kp) => {
     if (kp == null) return null;
-    const table = { 0: 0, 1: 4, 2: 7, 3: 15, 4: 27, 5: 48, 6: 80, 7: 132, 8: 224, 9: 400 };
+    const table = {
+      0: 0, 1: 4, 2: 7, 3: 15, 4: 27,
+      5: 48, 6: 80, 7: 132, 8: 224, 9: 400
+    };
     return table[Math.round(kp)] ?? null;
+  };
+
+  const getSolar = (val) => {
+    if (val == null) return "—";
+    if (Array.isArray(val)) return val[0] ?? "—";
+    if (typeof val === "object") {
+      const k = Object.keys(val)[0];
+      return k ? `${k}: ${val[k]}` : "—";
+    }
+    return val;
   };
 
   const getRadioBlackout = (val) => {
@@ -53,14 +66,16 @@ function App() {
       .then((data) => {
         const arr = data?.data ?? [];
         const mapped = arr.map((item, idx) => {
-          const kp = item.kp_index ?? null;
+          const kp = Array.isArray(item.kp_index)
+            ? Math.max(...item.kp_index)
+            : item.kp_index ?? null;
           const ap = item.a_index ?? getApFromKp(kp);
           return {
             day: `Day ${idx + 1}`,
             date: parseDate(item.date),
             kp,
             ap,
-            solar: item.solar_radiation ?? item.radio_flux ?? "—",
+            solar: getSolar(item.solar_radiation ?? item.radio_flux),
             radio: getRadioBlackout(item.radio_blackout),
           };
         });
@@ -98,9 +113,11 @@ function App() {
                   }}
                 >
                   <Typography variant="subtitle2">{f.date}</Typography>
-                  <Typography variant="h6">Kp Index: {f.kp ?? "—"}</Typography>
+                  <Typography variant="h6">
+                    Kp Index: {f.kp ?? "—"}
+                  </Typography>
                   <Typography>Ap Index: {f.ap ?? "—"}</Typography>
-                  <Typography>Solar: {f.solar ?? "—"}</Typography>
+                  <Typography>Solar: {f.solar}</Typography>
                   <Typography>Radio: {f.radio}</Typography>
                 </Box>
               ))}
