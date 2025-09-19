@@ -117,6 +117,20 @@ function App() {
     return null;
   };
 
+  // If API returns hourly data as object map, convert to ordered numeric array
+  const toHourlyArray = (maybe) => {
+    if (!maybe) return [];
+    if (Array.isArray(maybe)) return numericArray(maybe);
+    if (typeof maybe === "object") {
+      // preserve key order if possible; otherwise just use Object.values
+      const keys = Object.keys(maybe);
+      // If keys look like times (contain digits or 'UT') keep that order; else natural order
+      const arr = keys.map((k) => maybe[k]);
+      return numericArray(arr);
+    }
+    return numericArray(maybe);
+  };
+
   // parse date helper (robust)
   const parseDate = (item) => {
     const raw = item?.date ?? item?.iso ?? "";
@@ -124,7 +138,7 @@ function App() {
     // handle cases where raw might be a nested object
     if (typeof raw === "object") {
       // try common nested keys
-      const possible = firstNonNull(raw.iso, raw.ISO, raw.dateString, raw.toString());
+      const possible = firstNonNull(raw.iso, raw.ISO, raw.dateString, raw.toString && raw.toString());
       if (possible) {
         const d2 = new Date(possible);
         if (!isNaN(d2)) return d2;
@@ -158,11 +172,10 @@ function App() {
         console.log("DEBUG: raw API response:", resp);
         const arr = Array.isArray(resp) ? resp : resp?.data ?? [];
 
-        // map & parse dates, keep only items with a parseable date where possible
+        // map & parse dates, keep items; parsed may be null for some items
         const mapped = arr
           .map((it) => ({ it, parsed: parseDate(it) }))
           .sort((a, b) => {
-            // sort with parsed dates first; items with no parsed date go to the end preserving order
             if (a.parsed && b.parsed) return a.parsed - b.parsed;
             if (a.parsed) return -1;
             if (b.parsed) return 1;
@@ -216,15 +229,15 @@ function App() {
         // Format each chosen item: compute daily KP (peak), AP (mean), Solar (mean)
         const formattedData = finalChosenWithDates.map(({ item, displayDate }, idx) => {
           // priority: hourly arrays (kp_hourly / ap_hourly / solar_hourly) -> fallbacks
-          const kpHourlyCandidate = firstNonNull(item.kp_hourly, item.kp_hourly_values, item.kp_values);
-          const apHourlyCandidate = firstNonNull(item.ap_hourly, item.ap_hourly_values, item.ap_values);
-          const solarHourlyCandidate = firstNonNull(item.solar_hourly, item.radio_flux_hourly, item.solar_flux_hourly);
+          const kpHourlyCandidate = firstNonNull(item.kp_hourly, item.kp_hourly_values, item.kp_values, item.kp_values_hourly);
+          const apHourlyCandidate = firstNonNull(item.ap_hourly, item.ap_hourly_values, item.ap_values, item.ap_values_hourly);
+          const solarHourlyCandidate = firstNonNull(item.solar_hourly, item.radio_flux_hourly, item.solar_flux_hourly, item.solar_hourly_values);
 
           // compute kp: peak of hourly if present else max of other keys
           let kp = null;
-          if (kpHourlyCandidate) {
-            const arrK = numericArray(kpHourlyCandidate);
-            kp = arrK.length ? Math.max(...arrK) : null;
+          const kpHourlyArr = toHourlyArray(kpHourlyCandidate);
+          if (kpHourlyArr.length) {
+            kp = Math.max(...kpHourlyArr);
           }
           if (kp == null) {
             kp = firstNonNull(
@@ -237,9 +250,9 @@ function App() {
 
           // compute ap: mean of hourly if present else mean of other keys
           let ap = null;
-          if (apHourlyCandidate) {
-            const arrA = numericArray(apHourlyCandidate);
-            ap = arrA.length ? arrA.reduce((a, b) => a + b, 0) / arrA.length : null;
+          const apHourlyArr = toHourlyArray(apHourlyCandidate);
+          if (apHourlyArr.length) {
+            ap = apHourlyArr.reduce((a, b) => a + b, 0) / apHourlyArr.length;
           }
           if (ap == null) {
             ap = firstNonNull(
@@ -252,9 +265,9 @@ function App() {
 
           // compute solar: mean of hourly if present else mean of other keys
           let solar = null;
-          if (solarHourlyCandidate) {
-            const arrS = numericArray(solarHourlyCandidate);
-            solar = arrS.length ? arrS.reduce((a, b) => a + b, 0) / arrS.length : null;
+          const solarHourlyArr = toHourlyArray(solarHourlyCandidate);
+          if (solarHourlyArr.length) {
+            solar = solarHourlyArr.reduce((a, b) => a + b, 0) / solarHourlyArr.length;
           }
           if (solar == null) {
             solar = firstNonNull(
@@ -280,7 +293,7 @@ function App() {
           };
         });
 
-        console.debug("DEBUG: finalChosenWithDates (for inspection):", finalChosenWithDates.map(f => ({ iso: f.displayDate.toISOString().split('T')[0], raw: f.item })));
+        console.debug("DEBUG: finalChosenWithDates (for inspection):", finalChosenWithDates.map(f => ({ iso: f.displayDate.toISOString().split('T')[0], rawKeys: Object.keys(f.item || {}), raw: f.item })));
         console.log("DEBUG: formatted forecastData (future 3):", formattedData);
 
         setForecastData(formattedData);
@@ -288,14 +301,16 @@ function App() {
         // Set hourly breakdown arrays for charts & breakdown component. Prefer hourly from first chosen item.
         const firstSource = finalChosenWithDates[0]?.item ?? arr[0] ?? null;
         if (firstSource) {
-          // try several common hourly keys
-          const kpHourlyFromFirst = firstNonNull(firstSource.kp_hourly, firstSource.kp_hourly_values, firstSource.kp_values);
-          const apHourlyFromFirst = firstNonNull(firstSource.ap_hourly, firstSource.ap_hourly_values, firstSource.ap_values);
-          const solarHourlyFromFirst = firstNonNull(firstSource.solar_hourly, firstSource.radio_flux_hourly, firstSource.solar_flux_hourly);
+          const kpHourlyFromFirst = firstNonNull(firstSource.kp_hourly, firstSource.kp_hourly_values, firstSource.kp_values, firstSource.kp_values_hourly);
+          const apHourlyFromFirst = firstNonNull(firstSource.ap_hourly, firstSource.ap_hourly_values, firstSource.ap_values, firstSource.ap_values_hourly);
+          const solarHourlyFromFirst = firstNonNull(firstSource.solar_hourly, firstSource.radio_flux_hourly, firstSource.solar_flux_hourly, firstSource.solar_hourly_values);
 
-          setKpHourly(Array.isArray(kpHourlyFromFirst) ? kpHourlyFromFirst : []);
-          setApHourly(Array.isArray(apHourlyFromFirst) ? apHourlyFromFirst : []);
-          // note: ForecastBreakdown3Hourly may also read kpHourly/apHourly arrays to show the matrix
+          // convert to arrays if object-like
+          const kpArr = toHourlyArray(kpHourlyFromFirst);
+          const apArr = toHourlyArray(apHourlyFromFirst);
+          // set as arrays (or empty)
+          setKpHourly(kpArr);
+          setApHourly(apArr);
         }
       })
       .catch((err) => {
