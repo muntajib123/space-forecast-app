@@ -1,19 +1,21 @@
 # backend/forecast/views.py
-
 from rest_framework import viewsets
 from rest_framework.response import Response
 from datetime import datetime, date, timedelta
 import os, json
 from .models import Forecast3Day
-from .serializers import Forecast3DaySerializer
 
-# Path to NOAA JSON
+# Path to NOAA JSON (keeps original pattern you used)
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))
 NOAA_JSON_PATH = os.path.join(BASE_DIR, "ml_model", "forecast_3day.json")
 
 
 def get_noaa_last_date():
-    """Read forecast_3day.json and return the latest present date."""
+    """
+    Read forecast_3day.json and return the latest present date if available.
+    Accepts either {"present_dates": [...]} or list-of-objects-with-date.
+    Returns a datetime.date or None.
+    """
     if not os.path.exists(NOAA_JSON_PATH):
         return None
 
@@ -34,90 +36,111 @@ def get_noaa_last_date():
 
     parsed = []
     for d in dates:
-        try:
-            parsed.append(datetime.strptime(d, "%Y-%m-%d").date())
-        except Exception:
+        if not d:
             continue
+        # Accept "YYYY-MM-DD" or full ISO
+        try:
+            parsed_date = datetime.fromisoformat(d).date()
+        except Exception:
+            try:
+                parsed_date = datetime.strptime(d, "%Y-%m-%d").date()
+            except Exception:
+                continue
+        parsed.append(parsed_date)
 
     return max(parsed) if parsed else None
 
 
 class Forecast3DayViewSet(viewsets.ViewSet):
     """
-    Custom ViewSet for cleaned 3-day forecast output.
-    Ensures:
-      - Deduplicated dates
-      - Normalized Kp/Ap/Solar/Radio values
-      - Only next 3 future rows returned
+    Return a cleaned / normalized 3-day forecast.
+    Always returns the next 3 calendar days starting from tomorrow,
+    preferring DB rows whose date >= tomorrow; dedupe and normalize.
     """
 
     def list(self, request):
-        noaa_last = get_noaa_last_date()
+        # Determine starting date: tomorrow (local date)
+        start_date = date.today() + timedelta(days=1)
 
-        if noaa_last:
-            qs = Forecast3Day.objects.filter(date__gt=noaa_last).order_by("date")
-        else:
-            start = date.today() + timedelta(days=1)
-            end = start + timedelta(days=2)
-            qs = Forecast3Day.objects.filter(date__range=(start, end)).order_by("date")
+        # If NOAA JSON exists, optionally shift start_date to NOAA's last + 1
+        noaa_last = get_noaa_last_date()
+        if noaa_last and noaa_last >= start_date:
+            start_date = noaa_last + timedelta(days=1)
+
+        # Query DB for rows with date >= start_date, order ascending.
+        qs = Forecast3Day.objects.filter(date__gte=start_date).order_by("date")
 
         cleaned = []
-        seen_dates = set()
+        seen = set()
 
         for f in qs:
-            # Ensure valid date
-            d = f.date if isinstance(f.date, date) else None
-            if not d:
-                try:
-                    d = datetime.fromisoformat(str(f.date)).date()
-                except Exception:
-                    continue
-
-            date_str = d.isoformat()
-            if date_str in seen_dates:
+            # ensure f.date is a date
+            try:
+                d = f.date if isinstance(f.date, date) else datetime.fromisoformat(str(f.date)).date()
+            except Exception:
                 continue
-            seen_dates.add(date_str)
 
-            # Normalize Kp
-            kp = f.kp_index
-            if isinstance(kp, list) and kp:
-                kp_val = max([float(x) for x in kp if x is not None])
-            elif isinstance(kp, (int, float)):
-                kp_val = kp
-            else:
-                kp_val = None
+            iso = d.isoformat()
+            if iso in seen:
+                continue
+            seen.add(iso)
 
-            # Ap Index (direct if exists, else None)
+            # Normalize kp_index -> kp_value (max of list or numeric)
+            kp_raw = getattr(f, "kp_index", None)
+            kp_val = None
+            if isinstance(kp_raw, list) and kp_raw:
+                try:
+                    kp_val = max(float(x) for x in kp_raw if x is not None)
+                except Exception:
+                    kp_val = None
+            elif isinstance(kp_raw, (int, float)):
+                kp_val = kp_raw
+
+            # Ap: prefer stored a_index field if present
             ap_val = getattr(f, "a_index", None)
 
-            # Normalize Solar
-            solar = f.solar_radiation
-            if isinstance(solar, dict) and solar:
-                solar_val = list(solar.values())[0]
-            elif isinstance(solar, list) and solar:
-                solar_val = solar[0]
+            # Solar radiation: extract numeric summary from dict/list/float
+            solar_raw = getattr(f, "solar_radiation", None)
+            if isinstance(solar_raw, dict) and solar_raw:
+                # take first value (e.g., {"S1 or greater": 10})
+                solar_val = list(solar_raw.values())[0]
+            elif isinstance(solar_raw, list) and solar_raw:
+                solar_val = solar_raw[0]
             else:
                 solar_val = getattr(f, "radio_flux", None)
 
-            # Radio blackout
-            blackout = f.radio_blackout or {}
+            # Radio blackout: ensure dict
+            blackout = getattr(f, "radio_blackout", {}) or {}
 
             cleaned.append({
-                "date": date_str,
+                "date": iso,
                 "kp_index": kp_val,
                 "a_index": ap_val,
                 "solar_radiation": solar_val,
                 "radio_blackout": blackout,
+                "rationale_geomagnetic": getattr(f, "rationale_geomagnetic", "") or "",
+                "rationale_radiation": getattr(f, "rationale_radiation", "") or "",
+                "rationale_blackout": getattr(f, "rationale_blackout", "") or "",
             })
 
-        # ✅ Keep only the next 3 days (starting from tomorrow)
-        today = datetime.utcnow().date()
-        tomorrow = today + timedelta(days=1)
+            if len(cleaned) >= 3:
+                break
 
-        future = [
-            c for c in cleaned
-            if datetime.fromisoformat(c["date"]).date() >= tomorrow
-        ]
-        future = sorted(future, key=lambda x: x["date"])[:3]
+        # If DB did not provide 3 days, synthesize remaining calendar days using empty placeholders
+        idx = 0
+        while len(cleaned) < 3:
+            target = (start_date + timedelta(days=idx)).isoformat()
+            if not any(c["date"] == target for c in cleaned):
+                cleaned.append({
+                    "date": target,
+                    "kp_index": None,
+                    "a_index": None,
+                    "solar_radiation": None,
+                    "radio_blackout": {},
+                    "rationale_geomagnetic": "",
+                    "rationale_radiation": "",
+                    "rationale_blackout": "",
+                })
+            idx += 1
 
-        return Response({"data": future})
+        return Response({"data": cleaned})
