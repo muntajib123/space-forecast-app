@@ -1,3 +1,5 @@
+# backend/forecast/views.py
+
 from rest_framework import viewsets
 from rest_framework.response import Response
 from datetime import datetime, date, timedelta
@@ -46,7 +48,7 @@ class Forecast3DayViewSet(viewsets.ViewSet):
     Ensures:
       - Deduplicated dates
       - Normalized Kp/Ap/Solar/Radio values
-      - Only 3 future rows returned
+      - Only next 3 future rows returned
     """
 
     def list(self, request):
@@ -63,6 +65,7 @@ class Forecast3DayViewSet(viewsets.ViewSet):
         seen_dates = set()
 
         for f in qs:
+            # Ensure valid date
             d = f.date if isinstance(f.date, date) else None
             if not d:
                 try:
@@ -107,9 +110,14 @@ class Forecast3DayViewSet(viewsets.ViewSet):
                 "radio_blackout": blackout,
             })
 
-        # Keep only 3 upcoming days
+        # ✅ Keep only the next 3 days (starting from tomorrow)
         today = datetime.utcnow().date()
-        future = [c for c in cleaned if datetime.fromisoformat(c["date"]).date() >= today]
+        tomorrow = today + timedelta(days=1)
+
+        future = [
+            c for c in cleaned
+            if datetime.fromisoformat(c["date"]).date() >= tomorrow
+        ]
         future = sorted(future, key=lambda x: x["date"])[:3]
 
         return Response({"data": future})
