@@ -126,26 +126,52 @@ function App() {
         console.log("DEBUG: raw API response:", resp);
         const arr = Array.isArray(resp) ? resp : resp?.data ?? [];
 
-        // tomorrow midnight
+        // helper: map and parse
+        const mapped = arr
+          .map((it) => ({ it, parsed: parseDate(it) }))
+          .filter(({ parsed }) => parsed !== null)
+          .sort((a, b) => a.parsed - b.parsed);
+
+        console.debug("DEBUG: total parsed items:", mapped.length);
+
+        // start-of-today (00:00 local) and "nowStart" for future filtering
+        const nowStart = new Date();
+        nowStart.setHours(0, 0, 0, 0);
+
+        // Preferred candidates: strictly future (parsed > nowStart)
+        const futureCand = mapped.filter(({ parsed }) => parsed.getTime() > nowStart.getTime());
+
+        // Select up to 3 from futureCand; if not enough, fill from mapped (but do not duplicate).
+        const selected = [];
+
+        for (let i = 0; i < futureCand.length && selected.length < 3; i++) {
+          selected.push(futureCand[i]);
+        }
+
+        if (selected.length < 3) {
+          for (let i = 0; i < mapped.length && selected.length < 3; i++) {
+            // if this mapped item is already in selected, skip
+            if (selected.includes(mapped[i])) continue;
+            selected.push(mapped[i]);
+          }
+        }
+
+        // Finally, map to raw items (or empty array)
+        const chosenItems = selected.map(({ it }) => it);
+
+        // If chosenItems is still empty (no parsed dates), fallback to raw arr slice
+        const fallbackChosen = chosenItems.length ? chosenItems : arr.slice(0, 3);
+
+        // Determine a base "tomorrow" for labeling if needed
         const tomorrow = new Date();
         tomorrow.setHours(0, 0, 0, 0);
         tomorrow.setDate(tomorrow.getDate() + 1);
 
-        // take only future items (>= tomorrow), sort ascending, take 3
-        const futureItems = arr
-          .map((it) => ({ it, parsed: parseDate(it) }))
-          .filter(({ parsed }) => parsed && parsed.getTime() >= tomorrow.getTime())
-          .sort((a, b) => a.parsed - b.parsed)
-          .map(({ it }) => it)
-          .slice(0, 3);
+        // Format chosen items
+        const formattedData = fallbackChosen.map((item, idx) => {
+          const parsed = parseDate(item) || new Date(tomorrow.getTime() + idx * 86400000);
+          const forecastDate = parsed;
 
-        // format with recommended metrics:
-        // Kp = daily peak (max), Ap = mean, Solar = mean
-        const formattedData = futureItems.map((item, idx) => {
-          const parsed = parseDate(item);
-          const forecastDate = parsed || new Date(tomorrow.getTime() + idx * 86400000);
-
-          // prefer hourly arrays, fallback to single fields
           const kp = maxOf(item.kp_hourly ?? item.kp_index ?? item.kp ?? null);
           const ap = meanOf(item.ap_hourly ?? item.ap_index ?? item.a_index ?? item.ap ?? null);
           const solar = meanOf(item.radio_flux ?? item.solar_radiation ?? item.solar ?? null);
@@ -165,9 +191,12 @@ function App() {
         console.log("DEBUG: formatted forecastData (future 3):", formattedData);
         setForecastData(formattedData);
 
-        // use hourly breakdown from first future item if available
-        if (futureItems[0]?.kp_hourly) setKpHourly(futureItems[0].kp_hourly);
-        if (futureItems[0]?.ap_hourly) setApHourly(futureItems[0].ap_hourly);
+        // Use hourly breakdown from the first chosen item if available; fallback to first arr item
+        const firstSource = selected[0]?.it ?? arr[0] ?? null;
+        if (firstSource) {
+          if (firstSource.kp_hourly) setKpHourly(firstSource.kp_hourly);
+          if (firstSource.ap_hourly) setApHourly(firstSource.ap_hourly);
+        }
       })
       .catch((err) => {
         console.error("Error fetching forecast:", err);
