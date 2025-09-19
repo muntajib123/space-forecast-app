@@ -76,7 +76,7 @@ function App() {
       const flat = val.flat(Infinity);
       return flat
         .map((v) => {
-          const n = Number(v);
+          const n = Number(String(v).replace(/,/g, "").replace("%", ""));
           return Number.isNaN(n) ? null : n;
         })
         .filter((n) => n !== null);
@@ -86,12 +86,12 @@ function App() {
       const values = Object.values(val).flatMap((x) => (Array.isArray(x) ? x : [x]));
       return values
         .map((v) => {
-          const n = Number(v);
+          const n = Number(String(v).replace(/,/g, "").replace("%", ""));
           return Number.isNaN(n) ? null : n;
         })
         .filter((n) => n !== null);
     }
-    const n = Number(val);
+    const n = Number(String(val).replace(/,/g, "").replace("%", ""));
     return Number.isNaN(n) ? [] : [n];
   };
 
@@ -168,8 +168,32 @@ function App() {
 
     fetch3DayForecast()
       .then((resp) => {
+        // raw response log
         console.log("DEBUG: raw API response:", resp);
+
+        // normalize to array (API might return { data: [...] } or array)
         const arr = Array.isArray(resp) ? resp : resp?.data ?? [];
+
+        // debug dump (stringified) so we can inspect nested keys in deployed console
+        try {
+          console.log("DEBUG: full API array (stringified):\n", JSON.stringify(arr, null, 2));
+        } catch (e) {
+          console.warn("DEBUG: could not stringify API array", e);
+        }
+
+        // also print keys for each item (helps identify field names quickly)
+        try {
+          arr.forEach((it, i) => {
+            console.log(`DEBUG: keys for item[${i}]:`, Object.keys(it));
+            try {
+              console.log(`DEBUG: item[${i}] sample (stringified):\n`, JSON.stringify(it, null, 2));
+            } catch (e) {
+              console.warn(`DEBUG: cannot stringify item[${i}]`, e);
+            }
+          });
+        } catch (e) {
+          // noop
+        }
 
         // map & parse dates, keep items; parsed may be null for some items
         const mapped = arr
