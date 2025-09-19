@@ -48,8 +48,8 @@ function App() {
 
   // state
   const [forecastData, setForecastData] = useState([]);
-  const [kpHourly, setKpHourly] = useState([]);
-  const [apHourly, setApHourly] = useState([]);
+  const [kpHourly, setKpHourly] = useState([]); // hourly Kp for the first chosen day (if available)
+  const [apHourly, setApHourly] = useState([]); // hourly Ap for first chosen day (if available)
   const [fetchError, setFetchError] = useState(null);
 
   const lightTheme = createTheme({
@@ -68,11 +68,23 @@ function App() {
     },
   });
 
-  // Helpers: numeric array + mean / max (kept for backward compatibility)
+  // Helpers
   const numericArray = (val) => {
     if (val == null) return [];
+    // flatten arrays that may be nested
     if (Array.isArray(val)) {
-      return val
+      const flat = val.flat(Infinity);
+      return flat
+        .map((v) => {
+          const n = Number(v);
+          return Number.isNaN(n) ? null : n;
+        })
+        .filter((n) => n !== null);
+    }
+    // If object, try its values (shallow)
+    if (typeof val === "object") {
+      const values = Object.values(val).flatMap((x) => (Array.isArray(x) ? x : [x]));
+      return values
         .map((v) => {
           const n = Number(v);
           return Number.isNaN(n) ? null : n;
@@ -95,33 +107,8 @@ function App() {
     return Math.max(...arr);
   };
 
-  // robust extractor used below
-  const extractNumbers = (v) => {
-    if (v == null) return [];
-    // if it's array-like (of numbers or number-strings)
-    if (Array.isArray(v)) {
-      return v
-        .map((x) => {
-          const n = Number(x);
-          return Number.isNaN(n) ? null : n;
-        })
-        .filter((n) => n !== null);
-    }
-    // if it's an object with numeric fields, try to extract numeric values
-    if (typeof v === "object") {
-      // flatten object values (depth 1)
-      const values = Object.values(v).flatMap((x) => (Array.isArray(x) ? x : [x]));
-      return values
-        .map((x) => {
-          const n = Number(x);
-          return Number.isNaN(n) ? null : n;
-        })
-        .filter((n) => n !== null);
-    }
-    // otherwise try parse as number/string
-    const n = Number(v);
-    return Number.isNaN(n) ? [] : [n];
-  };
+  // robust extractor for arbitrary shapes (keeps parity with numericArray)
+  const extractNumbers = (v) => numericArray(v);
 
   const firstNonNull = (...args) => {
     for (const a of args) {
@@ -134,6 +121,16 @@ function App() {
   const parseDate = (item) => {
     const raw = item?.date ?? item?.iso ?? "";
     if (!raw) return null;
+    // handle cases where raw might be a nested object
+    if (typeof raw === "object") {
+      // try common nested keys
+      const possible = firstNonNull(raw.iso, raw.ISO, raw.dateString, raw.toString());
+      if (possible) {
+        const d2 = new Date(possible);
+        if (!isNaN(d2)) return d2;
+      }
+      return null;
+    }
     const d = new Date(raw);
     if (!isNaN(d)) return d;
     // try first 10 chars (YYYY-MM-DD)
@@ -161,101 +158,121 @@ function App() {
         console.log("DEBUG: raw API response:", resp);
         const arr = Array.isArray(resp) ? resp : resp?.data ?? [];
 
-        // helper: map and parse
+        // map & parse dates, keep only items with a parseable date where possible
         const mapped = arr
           .map((it) => ({ it, parsed: parseDate(it) }))
-          .filter(({ parsed }) => parsed !== null)
-          .sort((a, b) => a.parsed - b.parsed);
+          .sort((a, b) => {
+            // sort with parsed dates first; items with no parsed date go to the end preserving order
+            if (a.parsed && b.parsed) return a.parsed - b.parsed;
+            if (a.parsed) return -1;
+            if (b.parsed) return 1;
+            return 0;
+          });
 
-        console.debug("DEBUG: total parsed items:", mapped.length);
+        console.debug("DEBUG: total items:", arr.length, "parsed:", mapped.filter(m => m.parsed).length);
 
-        // start-of-today (00:00 local) and "nowStart" for future filtering
-        const nowStart = new Date();
-        nowStart.setHours(0, 0, 0, 0);
+        // today's start
+        const todayStart = new Date();
+        todayStart.setHours(0, 0, 0, 0);
 
-        // Preferred candidates: strictly future (parsed > nowStart)
-        const futureCand = mapped.filter(({ parsed }) => parsed.getTime() > nowStart.getTime());
+        // prefer strictly future items (parsed > todayStart)
+        const futureCand = mapped.filter(({ parsed }) => parsed && parsed.getTime() > todayStart.getTime());
 
-        // Select up to 3 from futureCand; if not enough, fill from mapped (but do not duplicate).
+        // pick up to 3
         const selected = [];
-
-        for (let i = 0; i < futureCand.length && selected.length < 3; i++) {
-          selected.push(futureCand[i]);
-        }
-
+        for (let i = 0; i < futureCand.length && selected.length < 3; i++) selected.push(futureCand[i]);
         if (selected.length < 3) {
           for (let i = 0; i < mapped.length && selected.length < 3; i++) {
-            // if this mapped item is already in selected, skip
             if (selected.includes(mapped[i])) continue;
             selected.push(mapped[i]);
           }
         }
 
-        // Finally, map to raw items (or empty array)
         const chosenItems = selected.map(({ it }) => it);
-
-        // If chosenItems is still empty (no parsed dates), fallback to raw arr slice
         const fallbackChosen = chosenItems.length ? chosenItems : arr.slice(0, 3);
 
-        // Determine a base "tomorrow" for labeling if needed
+        // prepare display dates: if API dates are all in the past, generate next 3 days from tomorrow
         const tomorrow = new Date();
         tomorrow.setHours(0, 0, 0, 0);
         tomorrow.setDate(tomorrow.getDate() + 1);
 
-        // --- robust numeric extraction and formatting ---
-        const formattedData = fallbackChosen.map((item, idx) => {
-          const parsed = parseDate(item) || new Date(tomorrow.getTime() + idx * 86400000);
-          const forecastDate = parsed;
+        const parsedItems = fallbackChosen.map((item, idx) => ({ item, parsed: parseDate(item), idx }));
+        const anyFuture = parsedItems.some((p) => p.parsed && p.parsed.getTime() >= todayStart.getTime());
 
-          // Try many common key names & shapes for Kp/Ap/Solar
-          const kpCandidates = [
-            item.kp_hourly,
-            item.kp_index,
-            item.kp,
-            item.kp_value,
-            item.kp_max,
-            item.Kp,
-          ];
-          const apCandidates = [
-            item.ap_hourly,
-            item.ap_index,
-            item.a_index,
-            item.ap,
-            item.ap_mean,
-            item.ap_daily,
-            item.Ap,
-          ];
-          const solarCandidates = [
-            item.radio_flux,
-            item.solar_radiation,
-            item.solar,
-            item.solar_flux,
-            item.solar_mean,
-          ];
+        let finalChosenWithDates;
+        if (!anyFuture) {
+          console.warn("DEBUG: API dates appear to be in the past — using generated next 3 calendar days for display");
+          finalChosenWithDates = parsedItems.map((p, idx) => ({
+            item: p.item,
+            displayDate: new Date(tomorrow.getTime() + idx * 86400000),
+          }));
+        } else {
+          finalChosenWithDates = parsedItems.map((p, idx) => ({
+            item: p.item,
+            displayDate: p.parsed || new Date(tomorrow.getTime() + idx * 86400000),
+          }));
+        }
 
-          // compute kp = max of any numeric candidate arrays/values
-          let kpVals = [];
-          for (const c of kpCandidates) kpVals = kpVals.concat(extractNumbers(c));
-          const kp = kpVals.length ? Math.max(...kpVals) : null;
+        // Format each chosen item: compute daily KP (peak), AP (mean), Solar (mean)
+        const formattedData = finalChosenWithDates.map(({ item, displayDate }, idx) => {
+          // priority: hourly arrays (kp_hourly / ap_hourly / solar_hourly) -> fallbacks
+          const kpHourlyCandidate = firstNonNull(item.kp_hourly, item.kp_hourly_values, item.kp_values);
+          const apHourlyCandidate = firstNonNull(item.ap_hourly, item.ap_hourly_values, item.ap_values);
+          const solarHourlyCandidate = firstNonNull(item.solar_hourly, item.radio_flux_hourly, item.solar_flux_hourly);
 
-          // compute ap = mean of any numeric candidate arrays/values
-          let apVals = [];
-          for (const c of apCandidates) apVals = apVals.concat(extractNumbers(c));
-          const ap = apVals.length ? apVals.reduce((a, b) => a + b, 0) / apVals.length : null;
+          // compute kp: peak of hourly if present else max of other keys
+          let kp = null;
+          if (kpHourlyCandidate) {
+            const arrK = numericArray(kpHourlyCandidate);
+            kp = arrK.length ? Math.max(...arrK) : null;
+          }
+          if (kp == null) {
+            kp = firstNonNull(
+              maxOf(item.kp_index ?? null),
+              maxOf(item.kp ?? null),
+              maxOf(item.kp_value ?? null),
+              maxOf(item.kp_max ?? null)
+            );
+          }
 
-          // solar mean
-          let solarVals = [];
-          for (const c of solarCandidates) solarVals = solarVals.concat(extractNumbers(c));
-          const solar = solarVals.length ? solarVals.reduce((a, b) => a + b, 0) / solarVals.length : null;
+          // compute ap: mean of hourly if present else mean of other keys
+          let ap = null;
+          if (apHourlyCandidate) {
+            const arrA = numericArray(apHourlyCandidate);
+            ap = arrA.length ? arrA.reduce((a, b) => a + b, 0) / arrA.length : null;
+          }
+          if (ap == null) {
+            ap = firstNonNull(
+              meanOf(item.ap_hourly ?? null),
+              meanOf(item.ap_index ?? null),
+              meanOf(item.a_index ?? null),
+              meanOf(item.ap ?? null)
+            );
+          }
 
-          // radio_blackout formatting (keep same fallback)
+          // compute solar: mean of hourly if present else mean of other keys
+          let solar = null;
+          if (solarHourlyCandidate) {
+            const arrS = numericArray(solarHourlyCandidate);
+            solar = arrS.length ? arrS.reduce((a, b) => a + b, 0) / arrS.length : null;
+          }
+          if (solar == null) {
+            solar = firstNonNull(
+              meanOf(item.solar_hourly ?? null),
+              meanOf(item.radio_flux ?? null),
+              meanOf(item.solar_radiation ?? null),
+              meanOf(item.solar ?? null),
+              meanOf(item.solar_flux ?? null)
+            );
+          }
+
           const radio_blackout_display = `${item.radio_blackout?.["R1-R2"] ?? "None"}/${item.radio_blackout?.["R3 or greater"] ?? "None"}`;
 
           return {
             ...item,
             day: `Day ${idx + 1}`,
-            date: forecastDate.toDateString(),
-            iso: forecastDate.toISOString().split("T")[0],
+            date: displayDate.toDateString(),
+            iso: displayDate.toISOString().split("T")[0],
             kp,
             ap,
             solar,
@@ -263,17 +280,22 @@ function App() {
           };
         });
 
-        // Debug: show raw chosen items + formatted output
-        console.debug("DEBUG: chosen raw items (for inspection):", fallbackChosen);
+        console.debug("DEBUG: finalChosenWithDates (for inspection):", finalChosenWithDates.map(f => ({ iso: f.displayDate.toISOString().split('T')[0], raw: f.item })));
         console.log("DEBUG: formatted forecastData (future 3):", formattedData);
 
         setForecastData(formattedData);
 
-        // Use hourly breakdown from the first chosen item if available; fallback to first arr item
-        const firstSource = selected[0]?.it ?? arr[0] ?? null;
+        // Set hourly breakdown arrays for charts & breakdown component. Prefer hourly from first chosen item.
+        const firstSource = finalChosenWithDates[0]?.item ?? arr[0] ?? null;
         if (firstSource) {
-          if (firstSource.kp_hourly) setKpHourly(firstSource.kp_hourly);
-          if (firstSource.ap_hourly) setApHourly(firstSource.ap_hourly);
+          // try several common hourly keys
+          const kpHourlyFromFirst = firstNonNull(firstSource.kp_hourly, firstSource.kp_hourly_values, firstSource.kp_values);
+          const apHourlyFromFirst = firstNonNull(firstSource.ap_hourly, firstSource.ap_hourly_values, firstSource.ap_values);
+          const solarHourlyFromFirst = firstNonNull(firstSource.solar_hourly, firstSource.radio_flux_hourly, firstSource.solar_flux_hourly);
+
+          setKpHourly(Array.isArray(kpHourlyFromFirst) ? kpHourlyFromFirst : []);
+          setApHourly(Array.isArray(apHourlyFromFirst) ? apHourlyFromFirst : []);
+          // note: ForecastBreakdown3Hourly may also read kpHourly/apHourly arrays to show the matrix
         }
       })
       .catch((err) => {
