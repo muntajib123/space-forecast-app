@@ -124,7 +124,6 @@ function App() {
     if (typeof maybe === "object") {
       // preserve key order if possible; otherwise just use Object.values
       const keys = Object.keys(maybe);
-      // If keys look like times (contain digits or 'UT') keep that order; else natural order
       const arr = keys.map((k) => maybe[k]);
       return numericArray(arr);
     }
@@ -230,7 +229,22 @@ function App() {
         const formattedData = finalChosenWithDates.map(({ item, displayDate }, idx) => {
           // priority: hourly arrays (kp_hourly / ap_hourly / solar_hourly) -> fallbacks
           const kpHourlyCandidate = firstNonNull(item.kp_hourly, item.kp_hourly_values, item.kp_values, item.kp_values_hourly);
-          const apHourlyCandidate = firstNonNull(item.ap_hourly, item.ap_hourly_values, item.ap_values, item.ap_values_hourly);
+          const apHourlyCandidate = firstNonNull(
+            item.ap_hourly,
+            item.ap_hourly_values,
+            item.ap_values,
+            item.ap_values_hourly,
+            item.ap_3hourly,
+            item.ap_3hour,
+            item.ap_matrix,
+            item.ap_matrix_values,
+            item.ap_values_list,
+            item.ap_list,
+            item.ap_by_ut,
+            item.ap_by_time,
+            item.apHourly,
+            item.ap
+          );
           const solarHourlyCandidate = firstNonNull(item.solar_hourly, item.radio_flux_hourly, item.solar_flux_hourly, item.solar_hourly_values);
 
           // compute kp: peak of hourly if present else max of other keys
@@ -302,7 +316,22 @@ function App() {
         const firstSource = finalChosenWithDates[0]?.item ?? arr[0] ?? null;
         if (firstSource) {
           const kpHourlyFromFirst = firstNonNull(firstSource.kp_hourly, firstSource.kp_hourly_values, firstSource.kp_values, firstSource.kp_values_hourly);
-          const apHourlyFromFirst = firstNonNull(firstSource.ap_hourly, firstSource.ap_hourly_values, firstSource.ap_values, firstSource.ap_values_hourly);
+          const apHourlyFromFirst = firstNonNull(
+            firstSource.ap_hourly,
+            firstSource.ap_hourly_values,
+            firstSource.ap_values,
+            firstSource.ap_values_hourly,
+            firstSource.ap_3hourly,
+            firstSource.ap_3hour,
+            firstSource.ap_matrix,
+            firstSource.ap_matrix_values,
+            firstSource.ap_values_list,
+            firstSource.ap_list,
+            firstSource.ap_by_ut,
+            firstSource.ap_by_time,
+            firstSource.apHourly,
+            firstSource.ap
+          );
           const solarHourlyFromFirst = firstNonNull(firstSource.solar_hourly, firstSource.radio_flux_hourly, firstSource.solar_flux_hourly, firstSource.solar_hourly_values);
 
           // convert to arrays if object-like
