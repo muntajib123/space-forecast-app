@@ -23,14 +23,6 @@ function App() {
   });
 
   // --- Helpers ---
-  const parseDate = (raw) => {
-    try {
-      return new Date(raw).toDateString();
-    } catch {
-      return "—";
-    }
-  };
-
   const getApFromKp = (kp) => {
     if (kp == null) return null;
     const table = {
@@ -65,20 +57,47 @@ function App() {
       })
       .then((data) => {
         const arr = data?.data ?? [];
-        const mapped = arr.map((item, idx) => {
+
+        // 🔹 Normalize dates
+        const valid = arr
+          .map((item) => ({
+            ...item,
+            parsedDate: new Date(item.date),
+          }))
+          .filter((item) => !isNaN(item.parsedDate));
+
+        // 🔹 Sort ascending
+        valid.sort((a, b) => a.parsedDate - b.parsedDate);
+
+        // 🔹 Keep only dates >= tomorrow
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const tomorrow = new Date(today);
+        tomorrow.setDate(today.getDate() + 1);
+
+        const futureOnly = valid.filter((item) => item.parsedDate >= tomorrow);
+
+        // 🔹 Take 3 future days only
+        const next3 = futureOnly.slice(0, 3);
+
+        // 🔹 Map into clean format
+        const mapped = next3.map((item, idx) => {
           const kp = Array.isArray(item.kp_index)
-            ? Math.max(...item.kp_index)
+            ? Math.max(...item.kp_index.filter((n) => !isNaN(n)))
             : item.kp_index ?? null;
+
           const ap = item.a_index ?? getApFromKp(kp);
+
           return {
             day: `Day ${idx + 1}`,
-            date: parseDate(item.date),
+            date: item.parsedDate.toDateString(),
             kp,
             ap,
             solar: getSolar(item.solar_radiation ?? item.radio_flux),
             radio: getRadioBlackout(item.radio_blackout),
           };
         });
+
         setForecastData(mapped);
       })
       .catch((err) => setFetchError(err.message));
