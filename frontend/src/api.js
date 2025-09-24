@@ -79,7 +79,11 @@ function normalizePredictions(raw = {}) {
   );
   if (!days) return [];
 
-  const baseDate = preds[0]?.date || new Date().toISOString();
+  // ✅ Use today's date + 2 days as forecast start
+  const start = new Date();
+  start.setUTCHours(0, 0, 0, 0);
+  start.setUTCDate(start.getUTCDate() + 2);
+
   const result = [];
 
   for (let i = 0; i < days; i++) {
@@ -90,8 +94,12 @@ function normalizePredictions(raw = {}) {
         : null
     );
     const kpVal = avg(vals);
+
+    const d = new Date(start);
+    d.setUTCDate(start.getUTCDate() + i);
+
     result.push({
-      date: formatDateYMD(baseDate, i),
+      date: d.toISOString().slice(0, 10), // YYYY-MM-DD
       kp_index: kpVal !== null ? Math.round(kpVal * 100) / 100 : null,
       a_index: null,
       solar_radiation: null,
