@@ -1,8 +1,7 @@
 // frontend/src/api.js
 // Robust fetch helper for 3-day forecast.
-// Updated to handle backend predictions with daily_avg_kp_next3days
 // ✅ Forces forecast dates to start from today + 2 days
-// ✅ Inserts dummy Solar Radiation and Radio Blackout values
+// ✅ Inserts dummy Solar Radiation, Radio Blackout, and Ap Index values
 
 // ============================================================================
 // Base setup
@@ -97,7 +96,7 @@ function normalizePredictions(raw = {}) {
     result.push({
       date: d.toISOString().slice(0, 10), // YYYY-MM-DD
       kp_index: kpVal !== null ? Math.round(kpVal * 100) / 100 : null,
-      a_index: null, // left null → shows N/A unless backend provides
+      a_index: 7, // ✅ fixed dummy Ap Index
       solar_radiation: solarPool[Math.floor(Math.random() * solarPool.length)],
       radio_flux: null,
       radio_blackout: blackoutPool[Math.floor(Math.random() * blackoutPool.length)],
