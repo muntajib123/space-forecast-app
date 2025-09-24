@@ -1,8 +1,8 @@
 // frontend/src/api.js
 // Robust fetch helper for 3-day forecast.
-// Handles backend predictions with daily_avg_kp_next3days,
-// uses future-start = today + 3 days (so deployed on 25 -> shows 27,28,29),
-// and extracts solar_radiation when present.
+// Updated to handle backend predictions with daily_avg_kp_next3days
+// ✅ Forces forecast dates to start from today + 2 days
+// ✅ Inserts dummy Solar Radiation and Radio Blackout values
 
 // ============================================================================
 // Base setup
@@ -40,28 +40,6 @@ function avg(nums = []) {
   return filtered.reduce((a, b) => a + Number(b), 0) / filtered.length;
 }
 
-function formatDateYMD(d) {
-  const dt = new Date(d);
-  if (Number.isNaN(dt.getTime())) return null;
-  return dt.toISOString().slice(0, 10);
-}
-
-function pickFirst(obj = {}, keys = []) {
-  for (const k of keys) {
-    if (Object.prototype.hasOwnProperty.call(obj, k) && obj[k] != null) return obj[k];
-  }
-  return null;
-}
-
-function toNumberOrNull(v) {
-  if (v === null || v === undefined || v === "") return null;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : null;
-}
-
-// ============================================================================
-// Normalizer
-// ============================================================================
 function normalizeResponse(json) {
   if (!json) return [];
   if (Array.isArray(json)) return json;
@@ -76,10 +54,9 @@ function normalizeResponse(json) {
   return [];
 }
 
-/**
- * Convert backend { predictions: [...] } into N forecast items for UI
- * Start date = today (UTC midnight) + 3 days so day1=+3, day2=+4, day3=+5
- */
+// ============================================================================
+// Normalizer
+// ============================================================================
 function normalizePredictions(raw = {}) {
   const preds = Array.isArray(raw) ? raw : normalizeResponse(raw);
   if (!Array.isArray(preds) || !preds.length) return [];
@@ -94,61 +71,40 @@ function normalizePredictions(raw = {}) {
   );
   if (!days) return [];
 
-  // Start at TODAY + 3 (so 25 -> 27). Adjust +N if you want a different offset.
+  // ✅ Start from today + 2 days
   const start = new Date();
   start.setUTCHours(0, 0, 0, 0);
-  start.setUTCDate(start.getUTCDate() + 3);
+  start.setUTCDate(start.getUTCDate() + 2);
+
+  // Dummy pools (based on NOAA sample data you shared)
+  const solarPool = ["1%"]; // all days were 1% in NOAA forecast
+  const blackoutPool = ["35% R1-R2", "1% R3+", "None"];
 
   const result = [];
 
   for (let i = 0; i < days; i++) {
-    // collect the i-th daily_avg_kp from each prediction run
+    // collect the ith value from each prediction
     const vals = preds.map((p) =>
-      Array.isArray(p.daily_avg_kp_next3days) ? p.daily_avg_kp_next3days[i] : null
+      Array.isArray(p.daily_avg_kp_next3days)
+        ? p.daily_avg_kp_next3days[i]
+        : null
     );
     const kpVal = avg(vals);
-
-    // attempt to extract solar radiation / flux if backend provides any of these keys
-    // common possible keys: solar_radiation, solarRadiation, f107, f10_7, solar_flux
-    // we inspect first prediction objects for a potential scalar to show
-    let solarVal = null;
-    for (const p of preds) {
-      const candidate = pickFirst(p, [
-        "solar_radiation",
-        "solarRadiation",
-        "f107",
-        "f10_7",
-        "solar_flux",
-        "solarFlux",
-      ]);
-      if (candidate != null) {
-        // If it's an array, try first element. If object, pick 'value' if present.
-        if (Array.isArray(candidate) && candidate.length) {
-          solarVal = toNumberOrNull(candidate[0]);
-        } else if (typeof candidate === "object") {
-          solarVal = toNumberOrNull(pickFirst(candidate, ["value", "v", "flux"]));
-        } else {
-          solarVal = toNumberOrNull(candidate);
-        }
-        if (solarVal !== null) break;
-      }
-    }
 
     const d = new Date(start);
     d.setUTCDate(start.getUTCDate() + i);
 
     result.push({
-      date: formatDateYMD(d),
+      date: d.toISOString().slice(0, 10), // YYYY-MM-DD
       kp_index: kpVal !== null ? Math.round(kpVal * 100) / 100 : null,
-      a_index: null, // AP/A index not provided by backend (keep null)
-      solar_radiation: solarVal, // may be null if backend doesn't provide
+      a_index: null, // left null → shows N/A unless backend provides
+      solar_radiation: solarPool[Math.floor(Math.random() * solarPool.length)],
       radio_flux: null,
-      radio_blackout: null,
-      source: "LSTM",
+      radio_blackout: blackoutPool[Math.floor(Math.random() * blackoutPool.length)],
+      source: "LSTM + dummy values",
       raw: preds.map((p) => ({ id: p._id, date: p.date })),
     });
   }
-
   return result;
 }
 
@@ -178,7 +134,8 @@ export default async function fetch3DayForecast({ timeoutMs = 15000 } = {}) {
         let bodyPreview = "";
         try {
           bodyPreview = await res.text();
-          if (bodyPreview.length > 500) bodyPreview = bodyPreview.slice(0, 500) + "…";
+          if (bodyPreview.length > 500)
+            bodyPreview = bodyPreview.slice(0, 500) + "…";
         } catch {}
         console.warn(
           `[api] non-ok response from ${url}: ${statusText}`,
@@ -191,7 +148,7 @@ export default async function fetch3DayForecast({ timeoutMs = 15000 } = {}) {
       try {
         json = await res.json();
       } catch (e) {
-        console.warn(`[api] failed to parse JSON from ${url}:`, e.message || e);
+        console.warn(`[api] failed to parse JSON from ${url}:`, e.message);
         continue;
       }
 
