@@ -1,6 +1,6 @@
 // frontend/src/api.js
 // Robust fetch helper for 3-day forecast.
-// ✅ Dates start from backend’s first returned date
+// ✅ Dates always start from today + 2 days (after NOAA 3-day block)
 // ✅ Ap Index derived from Kp Index
 // ✅ Fixed Solar Radiation = 1%
 // ✅ Fixed Radio Blackout = 35% (with labels for graphs + summary)
@@ -46,7 +46,7 @@ function kpToAp(kp) {
   if (kp === null || kp === undefined) return null;
   const table = {
     0: 0, 1: 4, 2: 7, 3: 15, 4: 27,
-    5: 48, 6: 80, 7: 140, 8: 240, 9: 400
+    5: 48, 6: 80, 7: 140, 8: 240, 9: 400,
   };
   const rounded = Math.round(kp);
   return table[rounded] ?? null;
@@ -82,13 +82,10 @@ function normalizePredictions(raw = {}) {
   );
   if (!days) return [];
 
-  // ✅ Start from first backend forecast date
-  const firstBackendDate = preds
-    .map((p) => new Date(p.date))
-    .filter((d) => !isNaN(d))
-    .sort((a, b) => a - b)[0] || new Date();
-
-  const start = new Date(firstBackendDate);
+  // ✅ Force forecast start date = today + 2 days
+  const start = new Date();
+  start.setUTCHours(0, 0, 0, 0);
+  start.setUTCDate(start.getUTCDate() + 2);
 
   const result = [];
 
@@ -108,7 +105,7 @@ function normalizePredictions(raw = {}) {
     const blackoutVal = 35; // always 35%
 
     result.push({
-      date: d.toISOString().slice(0, 10),
+      date: d.toISOString().slice(0, 10), // YYYY-MM-DD
       kp_index: kpVal !== null ? Math.round(kpVal * 100) / 100 : null,
       a_index: kpVal !== null ? kpToAp(kpVal) : null,
       solar_radiation: solarVal,
@@ -116,7 +113,7 @@ function normalizePredictions(raw = {}) {
       radio_flux: null,
       radio_blackout: blackoutVal,
       radio_blackout_label: "35% R1–R2", // for summary
-      r3_or_greater: "1%", // for summary table
+      r3_or_greater: "1%", // always fixed
       source: "LSTM + Ap from Kp + fixed extras",
       raw: preds.map((p) => ({ id: p._id, date: p.date })),
     });
