@@ -1,14 +1,15 @@
 // frontend/src/api.js
 // Robust fetch helper for 3-day forecast.
-// ✅ Dates start the day after NOAA’s last forecast
+// ✅ Dates start from backend’s first returned date
 // ✅ Ap Index derived from Kp Index
-// ✅ Dummy Solar Radiation + Radio Blackout values (numeric + label for graphs/summary)
+// ✅ Fixed Solar Radiation = 1%
+// ✅ Fixed Radio Blackout = 35% (with labels for graphs + summary)
 
 // ============================================================================
 // Base setup
 // ============================================================================
 const RAW_API_BASE = process.env.REACT_APP_API_BASE || "";
-const API_BASE = String(RAW_API_BASE).replace(/\/+$/, ""); // remove trailing slash(s)
+const API_BASE = String(RAW_API_BASE).replace(/\/+$/, "");
 
 console.info("BUILD: REACT_APP_API_BASE =", process.env.REACT_APP_API_BASE || "(empty)");
 
@@ -81,22 +82,13 @@ function normalizePredictions(raw = {}) {
   );
   if (!days) return [];
 
-  // ✅ Start after the last backend forecast date
-  const lastBackendDate = preds
+  // ✅ Start from first backend forecast date
+  const firstBackendDate = preds
     .map((p) => new Date(p.date))
     .filter((d) => !isNaN(d))
-    .sort((a, b) => b - a)[0] || new Date();
-  const start = new Date(lastBackendDate);
-  start.setUTCDate(start.getUTCDate() + 1);
+    .sort((a, b) => a - b)[0] || new Date();
 
-  // Dummy numeric pools
-  const solarPool = [1, 2, 3]; // % chance → for graphs
-  const blackoutPool = [0, 20, 35]; // % chance → for graphs
-  const blackoutLabels = {
-    0: "None",
-    20: "R1 possible",
-    35: "R1–R2 likely"
-  };
+  const start = new Date(firstBackendDate);
 
   const result = [];
 
@@ -111,19 +103,21 @@ function normalizePredictions(raw = {}) {
     const d = new Date(start);
     d.setUTCDate(start.getUTCDate() + i);
 
-    const solarVal = solarPool[Math.floor(Math.random() * solarPool.length)];
-    const blackoutVal = blackoutPool[Math.floor(Math.random() * blackoutPool.length)];
+    // Fixed dummy values
+    const solarVal = 1; // always 1%
+    const blackoutVal = 35; // always 35%
 
     result.push({
       date: d.toISOString().slice(0, 10),
       kp_index: kpVal !== null ? Math.round(kpVal * 100) / 100 : null,
       a_index: kpVal !== null ? kpToAp(kpVal) : null,
-      solar_radiation: solarVal, // numeric for graphs
-      solar_radiation_label: `${solarVal}% chance`, // text for summary
+      solar_radiation: solarVal,
+      solar_radiation_label: "1% (Minor)", // for summary
       radio_flux: null,
-      radio_blackout: blackoutVal, // numeric for graphs
-      radio_blackout_label: blackoutLabels[blackoutVal] || "None", // text for summary
-      source: "LSTM + Ap from Kp + dummy extras",
+      radio_blackout: blackoutVal,
+      radio_blackout_label: "35% R1–R2", // for summary
+      r3_or_greater: "1%", // for summary table
+      source: "LSTM + Ap from Kp + fixed extras",
       raw: preds.map((p) => ({ id: p._id, date: p.date })),
     });
   }
