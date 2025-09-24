@@ -1,6 +1,6 @@
 // frontend/src/api.js
 // Robust fetch helper for 3-day forecast.
-// ✅ Dates always start from today + 2 days (after NOAA 3-day block)
+// ✅ Dates come directly from backend docs (no guessing)
 // ✅ Ap Index derived from Kp Index
 // ✅ Fixed Solar Radiation = 1%
 // ✅ Fixed Radio Blackout = 35% (with labels for graphs + summary)
@@ -46,7 +46,7 @@ function kpToAp(kp) {
   if (kp === null || kp === undefined) return null;
   const table = {
     0: 0, 1: 4, 2: 7, 3: 15, 4: 27,
-    5: 48, 6: 80, 7: 140, 8: 240, 9: 400,
+    5: 48, 6: 80, 7: 140, 8: 240, 9: 400
   };
   const rounded = Math.round(kp);
   return table[rounded] ?? null;
@@ -82,11 +82,6 @@ function normalizePredictions(raw = {}) {
   );
   if (!days) return [];
 
-  // ✅ Force forecast start date = today + 2 days
-  const start = new Date();
-  start.setUTCHours(0, 0, 0, 0);
-  start.setUTCDate(start.getUTCDate() + 2);
-
   const result = [];
 
   for (let i = 0; i < days; i++) {
@@ -97,23 +92,25 @@ function normalizePredictions(raw = {}) {
     );
     const kpVal = avg(vals);
 
-    const d = new Date(start);
-    d.setUTCDate(start.getUTCDate() + i);
+    // ✅ Use backend doc.date as base
+    const baseDate = preds[0]?.date ? new Date(preds[0].date) : new Date();
+    const d = new Date(baseDate);
+    d.setUTCDate(baseDate.getUTCDate() + i);
 
     // Fixed dummy values
     const solarVal = 1; // always 1%
     const blackoutVal = 35; // always 35%
 
     result.push({
-      date: d.toISOString().slice(0, 10), // YYYY-MM-DD
+      date: d.toISOString().slice(0, 10),
       kp_index: kpVal !== null ? Math.round(kpVal * 100) / 100 : null,
       a_index: kpVal !== null ? kpToAp(kpVal) : null,
       solar_radiation: solarVal,
-      solar_radiation_label: "1% (Minor)", // for summary
+      solar_radiation_label: "1% (Minor)",
       radio_flux: null,
       radio_blackout: blackoutVal,
-      radio_blackout_label: "35% R1–R2", // for summary
-      r3_or_greater: "1%", // always fixed
+      radio_blackout_label: "35% R1–R2",
+      r3_or_greater: "1%",
       source: "LSTM + Ap from Kp + fixed extras",
       raw: preds.map((p) => ({ id: p._id, date: p.date })),
     });
