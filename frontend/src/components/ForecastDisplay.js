@@ -22,7 +22,7 @@ const isNumber = (v) => typeof v === "number" && !Number.isNaN(v);
 const roundStr = (v, digits = 2) => (isNumber(v) ? Number(v).toFixed(digits) : "N/A");
 
 const formatRadioBlackout = (rb) => {
-  if (!rb && rb !== 0) return "📡 None";
+  if (rb === null || rb === undefined) return "📡 None";
   if (typeof rb === "object") {
     const r1 = rb["R1-R2"] ?? rb.R1_R2 ?? rb.r1_r2 ?? rb.r1 ?? "N/A";
     const r3 = rb["R3 or greater"] ?? rb.R3 ?? rb.r3 ?? rb["R3+"] ?? "N/A";
@@ -32,21 +32,100 @@ const formatRadioBlackout = (rb) => {
 };
 
 function formatFullDate(d) {
-  if (!(d instanceof Date)) return "N/A";
-  return d.toLocaleDateString(undefined, {
-    weekday: "short",
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
+  try {
+    if (!d) return "N/A";
+    const dt = d instanceof Date ? d : new Date(d);
+    if (isNaN(dt.getTime())) return String(d);
+    return dt.toLocaleDateString(undefined, {
+      weekday: "short",
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    });
+  } catch {
+    return "N/A";
+  }
 }
 
 /**
- * Expects `forecast` to be an array of processed items:
- * { idx, parsedDate, dateLabel, kp, ap, solar, radio, raw }
+ * Normalizes a single incoming item (either already-processed or raw normalized backend item)
+ * into the canonical item shape used by the UI:
+ * { idx, parsedDate: Date|null, dateLabel: string|null, kp, ap, solar, radio, raw }
+ */
+function normalizeIncomingItem(rawItem, idx) {
+  // If the item already follows the processed shape (has kp/ap/solar), prefer those
+  const alreadyProcessed = rawItem && (rawItem.kp !== undefined || rawItem.ap !== undefined || rawItem.solar !== undefined);
+
+  if (alreadyProcessed) {
+    const parsedDate = rawItem.parsedDate ? (rawItem.parsedDate instanceof Date ? rawItem.parsedDate : new Date(rawItem.parsedDate)) : rawItem.dateLabel ? new Date(rawItem.dateLabel) : null;
+    return {
+      idx: rawItem.idx ?? idx,
+      parsedDate,
+      dateLabel: rawItem.dateLabel ?? (parsedDate ? parsedDate.toISOString().slice(0, 10) : rawItem.date ?? null),
+      kp: rawItem.kp ?? null,
+      ap: rawItem.ap ?? null,
+      solar: rawItem.solar ?? null,
+      radio: rawItem.radio ?? rawItem.radio_blackout ?? null,
+      raw: rawItem.raw ?? rawItem,
+    };
+  }
+
+  // Otherwise assume it's a normalized backend item (date, kp_index, a_index, solar_radiation, radio_blackout, radio_flux, raw)
+  const item = rawItem || {};
+  const parsedDate = item.date ? new Date(item.date) : item.created_at ? new Date(item.created_at) : null;
+  // KP: if array, compute mean; else try numeric fields
+  let kpVal = null;
+  const kpCandidate = item.kp_index ?? item.kpDailyAvg ?? item.kp_daily_avg ?? item.kp ?? item.kpIndex ?? null;
+  if (Array.isArray(kpCandidate) && kpCandidate.length) {
+    const nums = kpCandidate.filter((n) => typeof n === "number");
+    if (nums.length) kpVal = nums.reduce((a, b) => a + b, 0) / nums.length;
+  } else {
+    const n = Number(kpCandidate);
+    kpVal = Number.isFinite(n) ? n : null;
+  }
+  // Ap / a_index
+  const apCandidate = item.a_index ?? item.ap_index ?? item.ap ?? item.aIndex ?? null;
+  const apVal = (() => {
+    const n = Number(apCandidate);
+    return Number.isFinite(n) ? n : null;
+  })();
+  // Solar radiation (try several fields)
+  let solarCandidate = item.solar_radiation ?? item.solarRadiation ?? item.solar ?? item.radio_flux ?? item.f107 ?? null;
+  let solarVal = null;
+  if (Array.isArray(solarCandidate) && solarCandidate.length && typeof solarCandidate[0] === "number") {
+    solarVal = Number(solarCandidate[0]);
+  } else if (typeof solarCandidate === "object" && solarCandidate !== null) {
+    solarVal = Number(solarCandidate.value ?? solarCandidate.S1 ?? solarCandidate["S1 or greater"] ?? null);
+    if (!Number.isFinite(solarVal)) solarVal = null;
+  } else {
+    const n = Number(solarCandidate);
+    solarVal = Number.isFinite(n) ? n : null;
+  }
+  const radioVal = item.radio_blackout ?? item.radioBlackout ?? item.radio ?? null;
+
+  return {
+    idx: item.idx ?? idx,
+    parsedDate,
+    dateLabel: item.date_label ?? item.dateLabel ?? (parsedDate ? parsedDate.toISOString().slice(0, 10) : item.date ?? null),
+    kp: kpVal,
+    ap: apVal,
+    solar: solarVal,
+    radio: radioVal,
+    raw: item,
+  };
+}
+
+/**
+ * Expects `forecast` to be an array of either:
+ * - canonical processed items: { idx, parsedDate, dateLabel, kp, ap, solar, radio, raw }
+ * - normalized backend items: { date, kp_index, a_index, solar_radiation, radio_blackout, ... }
+ *
+ * This component normalizes both shapes then renders cards + table.
  */
 const ForecastDisplay = ({ forecast = [], onRefresh = null, backendErrorMessage = null }) => {
-  const items = Array.isArray(forecast) ? forecast : [];
+  const sourceItems = Array.isArray(forecast) ? forecast : [];
+  // Build canonical items
+  const items = sourceItems.map((it, i) => normalizeIncomingItem(it, i));
 
   const headerStart = items[0]?.parsedDate ?? null;
   const headerEnd = items[items.length - 1]?.parsedDate ?? null;
@@ -77,14 +156,14 @@ const ForecastDisplay = ({ forecast = [], onRefresh = null, backendErrorMessage 
           const ap = item.ap ?? null;
           const solar = item.solar ?? null;
           const radio = item.radio ?? null;
-          const dateLabel = item.parsedDate ? formatFullDate(item.parsedDate) : "N/A";
+          const dateLabel = item.parsedDate ? formatFullDate(item.parsedDate) : item.dateLabel ?? "N/A";
 
           return (
-            <Grid item xs={12} sm={6} md={4} key={item.idx ?? item.dateLabel ?? Math.random()}>
+            <Grid item xs={12} sm={6} md={4} key={item.idx ?? item.dateLabel ?? `${Math.random()}`}>
               <Card sx={{ backgroundColor: "#fff", color: "#000", boxShadow: 3, borderRadius: 3 }}>
                 <CardContent>
                   <Typography variant="h6" sx={{ fontSize: "1.1rem" }}>
-                    {`Day ${item.idx + 1}`} • {dateLabel}
+                    {`Day ${Number(item.idx ?? 0) + 1}`} • {dateLabel}
                   </Typography>
                   <Typography variant="body2" sx={{ color: "#666", mb: 1 }}>
                     {item.dateLabel ?? ""}
@@ -124,9 +203,9 @@ const ForecastDisplay = ({ forecast = [], onRefresh = null, backendErrorMessage 
             </TableHead>
             <TableBody>
               {items.map((item) => (
-                <TableRow key={item.idx ?? item.dateLabel ?? Math.random()}>
+                <TableRow key={item.idx ?? item.dateLabel ?? `${Math.random()}`}>
                   <TableCell sx={{ color: "#000", fontSize: "1.05rem" }}>
-                    <strong>{`Day ${item.idx + 1}`}</strong>
+                    <strong>{`Day ${Number(item.idx ?? 0) + 1}`}</strong>
                     <br />
                     <span style={{ color: "#666", fontSize: "0.95rem" }}>{item.dateLabel ?? ""}</span>
                   </TableCell>

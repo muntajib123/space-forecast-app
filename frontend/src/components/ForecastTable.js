@@ -11,8 +11,9 @@ import {
   Paper,
   Typography,
 } from "@mui/material";
-import { fetch3DayForecast } from "../api"; // uses your api.js helper
+import fetch3DayForecast from "../api"; // ✅ default import (not destructured)
 
+// ----------------- helpers -----------------
 const safeNumber = (v) => {
   if (v === null || v === undefined) return null;
   if (typeof v === "number") return Number.isFinite(v) ? v : null;
@@ -106,6 +107,7 @@ const parseRadioBlackout = (item) => {
   return { r1: String(rb), r3: "N/A", text: String(rb) };
 };
 
+// ----------------- component -----------------
 const ForecastTable = () => {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -126,8 +128,6 @@ const ForecastTable = () => {
           if (key) predMap.set(key, item);
         });
 
-        console.debug("[ForecastTable] backend length:", rawArr.length, "keys:", Array.from(predMap.keys()));
-
         // Find max date in backend
         let maxTs = null;
         predMap.forEach((_, key) => {
@@ -146,8 +146,6 @@ const ForecastTable = () => {
           const utcMidnight = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
           startDate = new Date(utcMidnight.getTime() + oneDayMs);
         }
-
-        console.debug("[ForecastTable] computed startDate:", startDate.toISOString().split("T")[0], "maxTs:", maxTs);
 
         // Generate 3 consecutive days
         const days = [];
