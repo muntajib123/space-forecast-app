@@ -1,7 +1,8 @@
 // frontend/src/api.js
 // Robust fetch helper for 3-day forecast.
-// ✅ Forces forecast dates to start from today + 2 days
-// ✅ Inserts dummy Solar Radiation, Radio Blackout, and Ap Index values
+// ✅ Dates start the day after NOAA’s last forecast
+// ✅ Ap Index derived from Kp Index
+// ✅ Dummy Solar Radiation + Radio Blackout values (numeric + label for graphs/summary)
 
 // ============================================================================
 // Base setup
@@ -39,6 +40,17 @@ function avg(nums = []) {
   return filtered.reduce((a, b) => a + Number(b), 0) / filtered.length;
 }
 
+// Convert Kp → Ap using NOAA lookup table
+function kpToAp(kp) {
+  if (kp === null || kp === undefined) return null;
+  const table = {
+    0: 0, 1: 4, 2: 7, 3: 15, 4: 27,
+    5: 48, 6: 80, 7: 140, 8: 240, 9: 400
+  };
+  const rounded = Math.round(kp);
+  return table[rounded] ?? null;
+}
+
 function normalizeResponse(json) {
   if (!json) return [];
   if (Array.isArray(json)) return json;
@@ -60,7 +72,6 @@ function normalizePredictions(raw = {}) {
   const preds = Array.isArray(raw) ? raw : normalizeResponse(raw);
   if (!Array.isArray(preds) || !preds.length) return [];
 
-  // determine number of days available
   const days = Math.max(
     ...preds.map((p) =>
       Array.isArray(p.daily_avg_kp_next3days)
@@ -70,19 +81,26 @@ function normalizePredictions(raw = {}) {
   );
   if (!days) return [];
 
-  // ✅ Start from today + 2 days
-  const start = new Date();
-  start.setUTCHours(0, 0, 0, 0);
-  start.setUTCDate(start.getUTCDate() + 2);
+  // ✅ Start after the last backend forecast date
+  const lastBackendDate = preds
+    .map((p) => new Date(p.date))
+    .filter((d) => !isNaN(d))
+    .sort((a, b) => b - a)[0] || new Date();
+  const start = new Date(lastBackendDate);
+  start.setUTCDate(start.getUTCDate() + 1);
 
-  // Dummy pools (based on NOAA sample data you shared)
-  const solarPool = ["1%"]; // all days were 1% in NOAA forecast
-  const blackoutPool = ["35% R1-R2", "1% R3+", "None"];
+  // Dummy numeric pools
+  const solarPool = [1, 2, 3]; // % chance → for graphs
+  const blackoutPool = [0, 20, 35]; // % chance → for graphs
+  const blackoutLabels = {
+    0: "None",
+    20: "R1 possible",
+    35: "R1–R2 likely"
+  };
 
   const result = [];
 
   for (let i = 0; i < days; i++) {
-    // collect the ith value from each prediction
     const vals = preds.map((p) =>
       Array.isArray(p.daily_avg_kp_next3days)
         ? p.daily_avg_kp_next3days[i]
@@ -93,14 +111,19 @@ function normalizePredictions(raw = {}) {
     const d = new Date(start);
     d.setUTCDate(start.getUTCDate() + i);
 
+    const solarVal = solarPool[Math.floor(Math.random() * solarPool.length)];
+    const blackoutVal = blackoutPool[Math.floor(Math.random() * blackoutPool.length)];
+
     result.push({
-      date: d.toISOString().slice(0, 10), // YYYY-MM-DD
+      date: d.toISOString().slice(0, 10),
       kp_index: kpVal !== null ? Math.round(kpVal * 100) / 100 : null,
-      a_index: 7, // ✅ fixed dummy Ap Index
-      solar_radiation: solarPool[Math.floor(Math.random() * solarPool.length)],
+      a_index: kpVal !== null ? kpToAp(kpVal) : null,
+      solar_radiation: solarVal, // numeric for graphs
+      solar_radiation_label: `${solarVal}% chance`, // text for summary
       radio_flux: null,
-      radio_blackout: blackoutPool[Math.floor(Math.random() * blackoutPool.length)],
-      source: "LSTM + dummy values",
+      radio_blackout: blackoutVal, // numeric for graphs
+      radio_blackout_label: blackoutLabels[blackoutVal] || "None", // text for summary
+      source: "LSTM + Ap from Kp + dummy extras",
       raw: preds.map((p) => ({ id: p._id, date: p.date })),
     });
   }
