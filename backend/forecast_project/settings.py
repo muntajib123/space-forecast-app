@@ -1,11 +1,10 @@
-# settings.py (fixed — copy & paste entire file)
 import os
+import json
 from pathlib import Path
 from urllib.parse import urlparse
 
-# Optional: load local .env for development
 try:
-    from dotenv import load_dotenv  # pip install python-dotenv
+    from dotenv import load_dotenv
 except Exception:
     load_dotenv = None
 
@@ -14,27 +13,39 @@ if load_dotenv:
     load_dotenv(BASE_DIR / ".env")
 
 # -----------------------------
-# Security / Keys
+# Basic settings
 # -----------------------------
 SECRET_KEY = os.environ.get(
     "DJANGO_SECRET_KEY",
     os.environ.get("SECRET_KEY", "change-me-locally-only"),
 )
 
-# DEBUG: accept 'True', 'true', '1', 'yes' to enable
 DEBUG = str(os.environ.get("DEBUG", "False")).lower() in ("true", "1", "yes")
 
-# ALLOWED_HOSTS: comma separated, default to '*' (use env in production)
+# -----------------------------
+# ALLOWED_HOSTS (robust parsing)
+# -----------------------------
 _raw_allowed = os.environ.get("ALLOWED_HOSTS", "*")
-if _raw_allowed.strip() == "":
+_raw_allowed = _raw_allowed.strip() if isinstance(_raw_allowed, str) else _raw_allowed
+
+ALLOWED_HOSTS = []
+if _raw_allowed:
+    try:
+        parsed = json.loads(_raw_allowed)
+        if isinstance(parsed, (list, tuple)):
+            ALLOWED_HOSTS = [str(h).strip() for h in parsed if str(h).strip()]
+    except Exception:
+        cleaned = _raw_allowed.strip()
+        if cleaned.startswith("[") and cleaned.endswith("]"):
+            cleaned = cleaned[1:-1]
+        parts = [p.strip().strip(' "\'') for p in cleaned.split(",") if p.strip()]
+        ALLOWED_HOSTS = [p for p in parts if p]
+
+if not ALLOWED_HOSTS:
     ALLOWED_HOSTS = ["*"]
-else:
-    ALLOWED_HOSTS = [h.strip() for h in _raw_allowed.split(",") if h.strip()]
-    if not ALLOWED_HOSTS:
-        ALLOWED_HOSTS = ["*"]
 
 # -----------------------------
-# Installed apps
+# Installed apps & middleware
 # -----------------------------
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -43,23 +54,15 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
-
-    # Third-party
-    "corsheaders",       # pip install django-cors-headers
+    "corsheaders",
     "rest_framework",
-
-    # Local apps
     "forecast",
     "api",
 ]
 
-# -----------------------------
-# Middleware
-# -----------------------------
 MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.common.CommonMiddleware",
-
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -68,9 +71,6 @@ MIDDLEWARE = [
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
 
-# -----------------------------
-# Root / Templates / WSGI
-# -----------------------------
 ROOT_URLCONF = "forecast_project.urls"
 
 TEMPLATES = [
@@ -94,24 +94,15 @@ WSGI_APPLICATION = "forecast_project.wsgi.application"
 # -----------------------------
 # Database: MongoDB (djongo)
 # -----------------------------
-# Supported environment variables:
-#  - MONGO_URI or MONGODB_URI  (full connection string, e.g. mongodb+srv://user:pass@host/db?...)
-#  - MONGO_DBNAME (optional) - if not provided we'll try to extract from URI
-#  - MONGO_TLS_ALLOW_INVALID (optional: True/False) - only for testing
-
-# Prefer MONGO_URI, then MONGODB_URI
 _raw_mongo_uri = os.environ.get("MONGO_URI") or os.environ.get("MONGODB_URI")
 MONGODB_URI = _raw_mongo_uri.strip() if _raw_mongo_uri and str(_raw_mongo_uri).strip() else None
 
-# TLS invalid certificates flag (False by default)
 MONGO_TLS_ALLOW_INVALID = str(
     os.environ.get("MONGO_TLS_ALLOW_INVALID", "False")
 ).lower() in ("true", "1", "yes")
 
+
 def _extract_dbname_from_uri(uri: str) -> str | None:
-    """
-    Extract database name from a mongodb URI if present, otherwise None.
-    """
     try:
         parsed = urlparse(uri)
         path = parsed.path or ""
@@ -122,34 +113,36 @@ def _extract_dbname_from_uri(uri: str) -> str | None:
         pass
     return None
 
-# Choose DB name:
+
 MONGO_DBNAME = os.environ.get("MONGO_DBNAME", "").strip() or None
 if not MONGO_DBNAME and MONGODB_URI:
     MONGO_DBNAME = _extract_dbname_from_uri(MONGODB_URI)
-
-# Final fallback DB name (useful for local dev)
 if not MONGO_DBNAME:
-    MONGO_DBNAME = "forecast3day"
+    MONGO_DBNAME = "noaa_database"
 
-# If using Atlas SRV (+srv) or URI includes DB, pass full URI as host.
 _db_client_host = MONGODB_URI or f"mongodb://localhost:27017/{MONGO_DBNAME}"
+_is_atlas = MONGODB_URI and "mongodb+srv" in MONGODB_URI
+
+client_cfg = {"host": _db_client_host}
+if _is_atlas:
+    client_cfg.update(
+        {
+            "tls": True,
+            "tlsAllowInvalidCertificates": MONGO_TLS_ALLOW_INVALID,
+        }
+    )
+else:
+    client_cfg.update({"tls": False})
 
 DATABASES = {
     "default": {
         "ENGINE": "djongo",
         "NAME": MONGO_DBNAME,
         "ENFORCE_SCHEMA": False,
-        "CLIENT": {
-            "host": _db_client_host,
-            "tls": True if (MONGODB_URI and "mongodb+srv" in MONGODB_URI) else False,
-            "tlsAllowInvalidCertificates": MONGO_TLS_ALLOW_INVALID,
-        },
+        "CLIENT": client_cfg,
     }
 }
 
-# -----------------------------
-# Misc
-# -----------------------------
 AUTH_PASSWORD_VALIDATORS = []
 
 LANGUAGE_CODE = "en-us"
@@ -163,74 +156,54 @@ STATIC_ROOT = os.path.join(BASE_DIR, "staticfiles")
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # -----------------------------
-# CORS configuration
+# CORS configuration (robust parsing)
 # -----------------------------
-# Behavior:
-#  - If DEBUG=True -> allow all origins (convenient for local dev)
-#  - If DEBUG=False -> read CORS_ALLOWED_ORIGINS env var (comma separated) or fail closed
 if DEBUG:
     CORS_ALLOW_ALL_ORIGINS = True
     CORS_ALLOW_CREDENTIALS = True
 else:
     CORS_ALLOW_ALL_ORIGINS = False
     CORS_ALLOW_CREDENTIALS = True
-    # Provide CORS_ALLOWED_ORIGINS as a comma-separated env var in production.
-    _cors_allowed = os.environ.get("CORS_ALLOWED_ORIGINS", "")
-    if _cors_allowed.strip():
-        CORS_ALLOWED_ORIGINS = [u.strip() for u in _cors_allowed.split(",") if u.strip()]
-    else:
-        # If nothing set, keep empty list (block cross-origin in prod).
-        CORS_ALLOWED_ORIGINS = []
+
+    raw = os.environ.get("CORS_ALLOWED_ORIGINS", "").strip()
+    CORS_ALLOWED_ORIGINS = []
+    if raw:
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, (list, tuple)):
+                CORS_ALLOWED_ORIGINS = [str(u).strip() for u in parsed if str(u).strip()]
+        except Exception:
+            cleaned = raw
+            if cleaned.startswith("[") and cleaned.endswith("]"):
+                cleaned = cleaned[1:-1]
+            parts = [p.strip().strip(' "\'') for p in cleaned.split(",") if p.strip()]
+            CORS_ALLOWED_ORIGINS = [p for p in parts if p]
+
+CORS_ALLOWED_ORIGIN_REGEXES = [
+    r"^https?:\/\/.*\.vercel\.app$",
+]
 
 # -----------------------------
-# Logging (send to stdout so PaaS captures it)
+# Logging
 # -----------------------------
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
-    "formatters": {
-        "simple": {"format": "%(levelname)s %(asctime)s %(name)s %(message)s"},
-    },
-    "handlers": {
-        "console": {
-            "class": "logging.StreamHandler",
-            "formatter": "simple",
-        },
-    },
-    "root": {
-        "handlers": ["console"],
-        "level": "INFO" if not DEBUG else "DEBUG",
-    },
+    "formatters": {"simple": {"format": "%(levelname)s %(asctime)s %(name)s %(message)s"}},
+    "handlers": {"console": {"class": "logging.StreamHandler", "formatter": "simple"}},
+    "root": {"handlers": ["console"], "level": "INFO" if not DEBUG else "DEBUG"},
     "loggers": {
-        "django": {
-            "handlers": ["console"],
-            "level": "INFO" if not DEBUG else "DEBUG",
-            "propagate": False,
-        },
-        "api": {
-            "handlers": ["console"],
-            "level": "DEBUG" if DEBUG else "INFO",
-            "propagate": False,
-        },
+        "django": {"handlers": ["console"], "level": "INFO" if not DEBUG else "DEBUG", "propagate": False},
+        "api": {"handlers": ["console"], "level": "DEBUG" if DEBUG else "INFO", "propagate": False},
     },
 }
 
-# -----------------------------
-# Helpful runtime notes (for quick debugging)
-# -----------------------------
-# - Make sure MONGO_URI or MONGODB_URI is set in your environment.
-# - If your Atlas password contains special characters (like @), URL-encode it (e.g. '@' -> '%40').
-# - In Render / other PaaS, set:
-#     MONGODB_URI = mongodb+srv://username:URL_ENCODED_PASSWORD@cluster0.../forecast3day?retryWrites=true&w=majority
-#     MONGO_DBNAME = forecast3day
-# - In production set:
-#     ALLOWED_HOSTS and CORS_ALLOWED_ORIGINS environment variables (comma-separated lists)
-# - If you see authentication/network errors:
-#     1) Check Atlas -> Database Access (user exists, password correct)
-#     2) Check Atlas -> Network Access (add your host or 0.0.0.0/0 for testing)
-#
 if DEBUG:
     import logging as _logging
     _logging.getLogger("django").info("DEBUG mode on")
     _logging.getLogger("django").info("MONGO_DBNAME=%s", MONGO_DBNAME)
     _logging.getLogger("django").info("Using MONGODB_URI set? %s", bool(MONGODB_URI))
+
+# -----------------------------
+# End of settings.py
+# -----------------------------

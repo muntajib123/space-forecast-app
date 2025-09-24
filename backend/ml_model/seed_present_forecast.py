@@ -1,91 +1,96 @@
-# backend/ml_model/seed_present_forecast.py
+# backend/ml_model/seed_future_forecast.py
 import os
 import sys
 import django
-from datetime import datetime
-from typing import Optional
+from datetime import datetime, timedelta, timezone as dt_timezone
 
-# Setup Django
+# Setup Django (same approach as your existing scripts)
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "forecast_project.settings")
 django.setup()
 
+from django.utils import timezone
 from forecast.models import Forecast3Day
 
-def _parse_date(s: str) -> Optional[datetime.date]:
-    """Parse YYYY-MM-DD date string to a date object, return None on failure."""
-    try:
-        return datetime.strptime(str(s), "%Y-%m-%d").date()
-    except Exception as e:
-        print(f"⚠️ Invalid date '{s}': {e}")
+def to_date(d):
+    """Return a date object from datetime/date/string; None on failure."""
+    if d is None:
         return None
+    if hasattr(d, "date") and not isinstance(d, str):
+        # datetime or date
+        try:
+            return d.date() if hasattr(d, "date") and not isinstance(d, d.__class__) else d
+        except Exception:
+            pass
+    # try parsing ISO date string
+    try:
+        return datetime.fromisoformat(str(d)).date()
+    except Exception:
+        try:
+            return datetime.strptime(str(d), "%Y-%m-%d").date()
+        except Exception:
+            return None
 
-# NOAA present_data example (Jul 2–4)
-present_data = [
-    {
-        "date": "2025-07-02",
-        "kp_index": [1.33, 1.67, 2.33, 2.67, 3.0, 3.0, 3.67, 4.67],
-        "solar_radiation": [5],
-        "radio_blackout": {"R1-R2": 20, "R3 or greater": 5},
-        "rationale_geomagnetic": "NOAA G1 storm levels possible",
-        "rationale_radiation": "Low chance of solar radiation storms",
-        "rationale_blackout": "Slight chance due to M-class flares"
-    },
-    {
-        "date": "2025-07-03",
-        "kp_index": [4.67, 4.33, 3.33, 2.67, 2.33, 2.67, 3.0, 3.67],
-        "solar_radiation": [1],
-        "radio_blackout": {"R1-R2": 15, "R3 or greater": 1},
-        "rationale_geomagnetic": "Lingering CME effects",
-        "rationale_radiation": "No major events expected",
-        "rationale_blackout": "Minor risk remains"
-    },
-    {
-        "date": "2025-07-04",
-        "kp_index": [2.67, 4.0, 3.0, 2.67, 1.67, 1.67, 2.0, 2.67],
-        "solar_radiation": [1],
-        "radio_blackout": {"R1-R2": 15, "R3 or greater": 1},
-        "rationale_geomagnetic": "Conditions returning to normal",
-        "rationale_radiation": "Stable activity forecasted",
-        "rationale_blackout": "Minor blackouts unlikely"
-    },
-]
+def generate_placeholder_for(date_obj):
+    """Return a simple placeholder forecast dict for the given date.
+       Replace this with your ML call when ready."""
+    # Example simple heuristic: small kp values that increase slightly each day
+    base_kp = 3.0
+    day_offset = (date_obj - datetime.utcnow().date()).days
+    kp_list = [round(base_kp + (day_offset * 0.2) + i * 0.1, 2) for i in range(8)]
 
-def seed_present_forecast(data_list):
-    saved = 0
-    for entry in data_list:
-        raw_date = entry.get("date")
-        if not raw_date:
-            print(f"⚠️ Skipping entry without 'date': {entry}")
+    return {
+        "date": date_obj,
+        "kp_index": kp_list,
+        "a_index": None,
+        "solar_radiation": [1],          # placeholder %
+        "radio_blackout": {"R1-R2": 0, "R3 or greater": 0},
+        "rationale_geomagnetic": "Auto-seeded placeholder",
+        "rationale_radiation": "Auto-seeded placeholder",
+        "rationale_blackout": "Auto-seeded placeholder",
+    }
+
+def seed_future(n_days=3):
+    # Use UTC now and start at tomorrow (UTC)
+    now = timezone.now()
+    try:
+        now_utc = now.astimezone(dt_timezone.utc)
+    except Exception:
+        now_utc = now
+    start = (now_utc + timedelta(days=1)).date()
+
+    created = 0
+    updated = 0
+
+    for i in range(n_days):
+        target = start + timedelta(days=i)
+        payload = generate_placeholder_for(target)
+
+        # Normalize date
+        payload_date = to_date(payload.get("date") or target)
+        if payload_date is None:
+            print(f"Skipping invalid date for payload: {payload}")
             continue
 
-        date_obj = _parse_date(raw_date)
-        if not date_obj:
-            print(f"⚠️ Skipping entry with invalid date: {entry}")
-            continue
-
-        # Build defaults dict safely (use get with fallback)
         defaults = {
-            "kp_index": entry.get("kp_index"),
-            "solar_radiation": entry.get("solar_radiation"),
-            "radio_blackout": entry.get("radio_blackout"),
-            "rationale_geomagnetic": entry.get("rationale_geomagnetic"),
-            "rationale_radiation": entry.get("rationale_radiation"),
-            "rationale_blackout": entry.get("rationale_blackout"),
+            "kp_index": payload.get("kp_index"),
+            "solar_radiation": payload.get("solar_radiation"),
+            "radio_blackout": payload.get("radio_blackout"),
+            "rationale_geomagnetic": payload.get("rationale_geomagnetic"),
+            "rationale_radiation": payload.get("rationale_radiation"),
+            "rationale_blackout": payload.get("rationale_blackout"),
+            "a_index": payload.get("a_index"),
         }
 
-        try:
-            obj, created = Forecast3Day.objects.update_or_create(
-                date=date_obj,
-                defaults=defaults
-            )
-            action = "Created" if created else "Updated"
-            print(f"✅ {action} forecast for {date_obj.isoformat()}")
-            saved += 1
-        except Exception as e:
-            print(f"❌ Error saving forecast for {date_obj.isoformat()}: {e}")
+        obj, created_flag = Forecast3Day.objects.update_or_create(date=payload_date, defaults=defaults)
+        if created_flag:
+            created += 1
+            print(f"Created forecast for {payload_date.isoformat()}")
+        else:
+            updated += 1
+            print(f"Updated forecast for {payload_date.isoformat()}")
 
-    print(f"ℹ️ Seed complete. Processed {len(data_list)} entries, saved/updated {saved} entries.")
+    print(f"Seed complete — created: {created}, updated: {updated}")
 
 if __name__ == "__main__":
-    seed_present_forecast(present_data)
+    seed_future(n_days=3)  # change to 7 if you want a larger buffer

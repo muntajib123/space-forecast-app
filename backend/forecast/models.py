@@ -1,5 +1,6 @@
-# forecast/models.py
 from djongo import models
+from django.core.exceptions import ValidationError
+from datetime import datetime
 
 class Forecast3Day(models.Model):
     """
@@ -30,3 +31,11 @@ class Forecast3Day(models.Model):
 
     def __str__(self):
         return f"Forecast for {self.date}"
+
+    def clean(self):
+        """
+        Prevent NOAA baselines from being saved with a future start date.
+        """
+        if self.rationale_geomagnetic and "noaa" in self.rationale_geomagnetic.lower():
+            if self.date and self.date > datetime.utcnow().date():
+                raise ValidationError("NOAA baseline start date cannot be in the future.")

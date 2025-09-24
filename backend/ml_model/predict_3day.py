@@ -1,67 +1,164 @@
-# backend/ml_model/predict_3day.py
+# ml_model/predict_3day.py
 import os
-import sys
-import django
-from datetime import date, timedelta
-import random
+import joblib
+import numpy as np
+import pandas as pd
+from datetime import datetime, timedelta
+from pymongo import MongoClient
+from tensorflow.keras.models import load_model
+import logging
 
-# --- Ensure Django settings are importable ---
-# Compute backend root (one level up from this file's folder)
-THIS_DIR = os.path.dirname(os.path.abspath(__file__))       # .../backend/ml_model
-BACKEND_ROOT = os.path.dirname(THIS_DIR)                    # .../backend
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("predict_3day")
 
-# Put backend root on sys.path so Python can import your project package
-if BACKEND_ROOT not in sys.path:
-    sys.path.insert(0, BACKEND_ROOT)
+MODEL_OUT = os.environ.get("MODEL_OUT", "ml_model/models/lstm_kp_model.h5")
+SCALER_OUT = os.environ.get("SCALER_OUT", "ml_model/models/kp_scaler.save")
+SEQ_LENGTH = int(os.environ.get("SEQ_LENGTH", 24))
+FORECAST_LENGTH = int(os.environ.get("FORECAST_LENGTH", 24))
+TRAIN_COLLECTION = os.environ.get("HIST_COLLECTION", "forecast_forecast3day")
+FORECAST_COLLECTION = os.environ.get("FORECAST_COLLECTION", "forecast_forecast3day")
+MONGO_URI = os.environ.get("MONGO_URI")
+MONGO_DB = os.environ.get("MONGO_DB", "forecast3day")
+PUBLISH_IF_QUALITY_GE = float(os.environ.get("PUBLISH_IF_QUALITY_GE", 0.0))
 
-# Set DJANGO_SETTINGS_MODULE to your project settings module.
-# If your settings module lives at backend/forecast_project/settings.py then use 'forecast_project.settings'
-# If your project package is named differently, replace 'forecast_project.settings' accordingly.
-os.environ.setdefault("DJANGO_SETTINGS_MODULE", "forecast_project.settings")
+def get_latest_quality(db):
+    doc = db.get_collection("model_runs").find_one(sort=[("trained_at", -1)])
+    if not doc:
+        return None
+    if "quality_0_1" in doc:
+        return float(doc["quality_0_1"])
+    return float(doc.get("quality", 0.0))
 
-# Now safe to import and setup Django
-try:
-    django.setup()
-except Exception as e:
-    print("Failed to setup Django. Check DJANGO_SETTINGS_MODULE and project layout.")
-    raise
-
-from forecast.models import Forecast3Day  # import after django.setup()
-
-def run_3day_forecast():
+def _safe_to_datetime(val):
     """
-    Simple 3-day forecast generator — placeholder.
-    Replace ML logic with your model outputs as needed.
+    Convert val to a timezone-aware (UTC) pandas Timestamp.
+    Handles strings, naive datetimes, and pandas Timestamps.
     """
-    today = date.today()
-    start = today + timedelta(days=1)  # tomorrow
+    try:
+        # let pandas handle many formats; force utc
+        ts = pd.to_datetime(val, utc=True)
+        return ts
+    except Exception:
+        try:
+            # last-resort: if val is a datetime without tz, attach UTC
+            if isinstance(val, datetime):
+                return pd.to_datetime(val).tz_localize("UTC")
+        except Exception:
+            pass
+    return None
 
-    inserted = 0
-    for i in range(3):
-        forecast_date = start + timedelta(days=i)
+def load_recent_sequence_from_collection(db, lookback):
+    col = db.get_collection(TRAIN_COLLECTION)
+    docs = list(col.find({}).sort("date", 1))
+    records = []
+    for d in docs:
+        date = d.get("date")
+        kp = d.get("kp_index") or d.get("predicted_kp_3hr") or d.get("kp")
+        if isinstance(kp, (list, tuple)) and len(kp) > 0:
+            for i, v in enumerate(kp):
+                try:
+                    base_ts = _safe_to_datetime(date)
+                    if base_ts is None:
+                        base_ts = pd.to_datetime(d.get("_id").generation_time, utc=True)
+                    ts = base_ts + pd.to_timedelta(i * 3, unit="h")
+                except Exception:
+                    ts = pd.to_datetime(d.get("_id").generation_time, utc=True) + pd.to_timedelta(i * 3, unit="h")
+                try:
+                    records.append({"datetime": ts, "kp": float(v)})
+                except Exception:
+                    continue
+        else:
+            try:
+                ts = _safe_to_datetime(date)
+                if ts is None:
+                    ts = pd.to_datetime(d.get("_id").generation_time, utc=True)
+            except Exception:
+                ts = pd.to_datetime(d.get("_id").generation_time, utc=True)
+            try:
+                records.append({"datetime": ts, "kp": float(kp)})
+            except Exception:
+                continue
 
-        # Example predictions (replace with your model output)
-        kp_val = round(random.uniform(2, 6), 2)
-        a_val = int(kp_val * 3.5)
-        solar_val = round(random.uniform(1, 10), 2)
-        blackout = {"R1-R2": random.randint(0, 3), "R3 or greater": random.randint(0, 1)}
+    df = pd.DataFrame(records)
+    if df.empty:
+        raise RuntimeError("Not enough history to build recent sequence")
+    # ensure timezone-aware and sorted
+    df["datetime"] = pd.to_datetime(df["datetime"], utc=True)
+    df = df.sort_values("datetime").reset_index(drop=True)
 
-        # Store as the model expects: kp_index as list (or scalar), solar_radiation as list/dict, etc.
-        Forecast3Day.objects.update_or_create(
-            date=forecast_date,
-            defaults={
-                "kp_index": [kp_val],
-                "a_index": a_val,
-                "solar_radiation": [solar_val],
-                "radio_blackout": blackout,
-                "rationale_geomagnetic": "Generated by quick 3-day script",
-                "rationale_radiation": "Generated by quick 3-day script",
-                "rationale_blackout": "Generated by quick 3-day script",
-            },
-        )
-        inserted += 1
+    if len(df) < lookback:
+        raise RuntimeError("Not enough history to build recent sequence")
+    seq = df["kp"].values.astype(float)[-lookback:].reshape(-1,1)
+    return seq, df
 
-    print(f"✅ Inserted/Updated {inserted} forecasts: {start} → {start + timedelta(days=2)}")
+def main():
+    if not MONGO_URI:
+        raise RuntimeError("Set MONGO_URI environment variable")
+
+    logger.info("Loading model and scaler")
+    model = load_model(MODEL_OUT, compile=False)
+    scaler = joblib.load(SCALER_OUT)
+
+    client = MongoClient(MONGO_URI)
+    db = client[MONGO_DB]
+
+    quality = get_latest_quality(db)
+    logger.info("Latest model quality (0..1): %s", quality)
+
+    if quality is None:
+        logger.warning("No model_runs quality found - proceeding based on PUBLISH_IF_QUALITY_GE")
+
+    recent_seq, df_hist = load_recent_sequence_from_collection(db, SEQ_LENGTH)
+    scaled_recent = scaler.transform(recent_seq)
+
+    # Predict: model was trained to output whole horizon at once; produce preds accordingly
+    inp = scaled_recent.reshape(1, SEQ_LENGTH, 1)
+    preds = model.predict(inp).reshape(-1)  # length = FORECAST_LENGTH
+    # keep predictions in reasonable range (model trained on MinMaxScaler => outputs approx in [0,1])
+    preds = np.clip(preds, -1.0, 1.0)
+    preds = preds.reshape(-1,1)
+    preds_inv = scaler.inverse_transform(preds)  # (FORECAST_LENGTH,1)
+
+    now = datetime.utcnow()
+    docs = []
+    for day in range(3):
+        start = day * 8
+        end = start + 8
+        slice_vals = preds_inv[start:end].flatten() if end <= len(preds_inv) else preds_inv[start:].flatten()
+        daily_avg = float(np.mean(slice_vals)) if len(slice_vals) else None
+        # use ISO UTC date string for the day (midnight UTC)
+        day_date = (now + timedelta(days=day+1)).replace(hour=0, minute=0, second=0, microsecond=0)
+        iso_date = day_date.strftime("%Y-%m-%dT%H:%M:%SZ")
+        docs.append({
+            "date": iso_date,
+            "kp_index": slice_vals.tolist(),
+            "kp_daily_avg": daily_avg,
+            "created_at": datetime.utcnow(),
+            "source": "lstm_kp_model"
+        })
+
+    publish = True
+    if quality is not None:
+        publish = (quality >= PUBLISH_IF_QUALITY_GE)
+
+    if publish:
+        res = db.get_collection(FORECAST_COLLECTION).insert_many(docs)
+        logger.info("Inserted %d forecast docs", len(res.inserted_ids))
+        db.get_collection("prediction_publishes").insert_one({
+            "published_at": now,
+            "inserted_ids": [str(x) for x in res.inserted_ids],
+            "model_quality_0_1": float(quality) if quality is not None else None
+        })
+        print("Published:", res.inserted_ids)
+    else:
+        logger.warning("Not publishing: quality=%s threshold=%s", quality, PUBLISH_IF_QUALITY_GE)
+        db.get_collection("prediction_publishes").insert_one({
+            "published_at": now,
+            "published": False,
+            "model_quality_0_1": float(quality) if quality is not None else None,
+            "docs_preview": docs
+        })
+        print("Not published; quality too low:", quality)
 
 if __name__ == "__main__":
-    run_3day_forecast()
+    main()

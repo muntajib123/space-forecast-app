@@ -1,0 +1,13 @@
+[
+  {
+    "date": "2025-09-24",
+    "kp_index": [2.0,1.67,1.33,2.33,1.33,1.67,1.67,2.33],
+    "a_index": 4,
+    "radio_flux": 70.0,
+    "solar_radiation": [1,1,1],
+    "radio_blackout": {"R1-R2": 35, "R3 or greater": 1},
+    "rationale_geomagnetic": "NOAA official 3-day forecast Sep 24-26 2025",
+    "rationale_radiation": "NOAA official 3-day forecast Sep 24-26 2025",
+    "rationale_blackout": "NOAA official 3-day forecast Sep 24-26 2025"
+  }
+]
