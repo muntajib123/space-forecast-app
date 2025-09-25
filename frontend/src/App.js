@@ -86,6 +86,12 @@ function App() {
     setFetchErrorObj(null);
 
     try {
+      // Defensive check: ensure import is actually a function before calling.
+      if (typeof fetch3DayForecast !== "function") {
+        console.error("[App] fetch3DayForecast is not a function — value:", fetch3DayForecast);
+        throw new Error("Internal error: API helper not available (fetch3DayForecast is not a function).");
+      }
+
       const arr = await fetch3DayForecast();
       console.info("[App] raw fetch3DayForecast response:", arr);
 
@@ -143,6 +149,7 @@ function App() {
       setDisplayItems(final);
     } catch (err) {
       console.error("[App] loadForecast error:", err);
+      // include server-body if the error object contains it (fetch3DayForecast helpers sometimes attach it)
       setFetchError(err.message || "Failed to fetch 3-day forecast");
       setFetchErrorObj(err);
       setRawItems([]);
