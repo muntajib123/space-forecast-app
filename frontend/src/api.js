@@ -1,6 +1,6 @@
 // frontend/src/api.js
 // Robust fetch helper for 3-day forecast.
-// ✅ Dates come directly from backend docs (no guessing)
+// ✅ Accepts multiple backend shapes (array-of-day-docs OR docs-with-daily-arrays)
 // ✅ Ap Index derived from fractional Kp Index (thirds-aware)
 // ✅ Fixed Solar Radiation = 1%
 // ✅ Fixed Radio Blackout = 35% (with labels for graphs + summary)
@@ -76,13 +76,82 @@ function normalizeResponse(json) {
 }
 
 // ============================================================================
-// Normalizer
+// Robust Normalizer (handles multiple backend shapes)
 // ============================================================================
 function normalizePredictions(raw = {}) {
   const preds = Array.isArray(raw) ? raw : normalizeResponse(raw);
-  if (!Array.isArray(preds) || !preds.length) return [];
+  if (!Array.isArray(preds) || !preds.length) {
+    console.info("[api] normalizePredictions: no preds array found");
+    return [];
+  }
 
-  // how many days (use maximum length found among documents)
+  // QUICK PATH: If preds look like one-doc-per-day (small array, each doc has a date or kp)
+  const looksLikeDayDocs = preds.length <= 7 && preds.every((p) => {
+    if (!p) return false;
+    // If it has an explicit per-day kp number or a date, treat as day-doc
+    return (
+      typeof p.kp === "number" ||
+      typeof p.kp_index === "number" ||
+      typeof p.Kp === "number" ||
+      typeof p.kp_value === "number" ||
+      Boolean(p.date) ||
+      Boolean(p.forecast_date)
+    );
+  });
+
+  if (looksLikeDayDocs) {
+    console.info("[api] normalizePredictions: treating preds as one-doc-per-day");
+    return preds.map((p, idx) => {
+      // try several kp sources (also support daily_avg_kp_next3days first element if present)
+      let kpRaw = null;
+      if (Array.isArray(p.daily_avg_kp_next3days) && p.daily_avg_kp_next3days.length) {
+        kpRaw = p.daily_avg_kp_next3days[0];
+      } else {
+        kpRaw = p.kp ?? p.kp_index ?? p.Kp ?? p.kp_value ?? p.daily_kp ?? null;
+      }
+      const kpVal = kpRaw === null || kpRaw === undefined ? null : Number(kpRaw);
+      const apVal = kpVal != null && !Number.isNaN(kpVal) ? kpToAp(kpVal) : null;
+
+      // date resolution: use doc date if present, otherwise infer from first doc
+      let dateStr = p.date ?? p.forecast_date ?? null;
+      if (!dateStr) {
+        const base = preds[0] && (preds[0].date || preds[0].forecast_date);
+        if (base) {
+          const bd = new Date(base);
+          const d = new Date(Date.UTC(bd.getUTCFullYear(), bd.getUTCMonth(), bd.getUTCDate()));
+          d.setUTCDate(d.getUTCDate() + idx);
+          dateStr = d.toISOString().slice(0, 10);
+        } else {
+          // fallback to today + idx
+          const d = new Date();
+          d.setUTCDate(d.getUTCDate() + idx);
+          dateStr = d.toISOString().slice(0, 10);
+        }
+      } else {
+        try { dateStr = new Date(dateStr).toISOString().slice(0, 10); } catch (e) {}
+      }
+
+      const solarVal = p.solar_radiation_pct ?? p.solar_radiation ?? 1;
+      const blackoutVal = p.radio_blackout_pct ?? p.radio_blackout ?? 35;
+
+      return {
+        date: dateStr,
+        kp_index: kpVal !== null && !Number.isNaN(kpVal) ? Math.round(kpVal * 100) / 100 : null,
+        a_index: apVal,
+        ap: apVal,
+        solar_radiation_pct: solarVal,
+        solar_radiation_label: `${solarVal}% (Minor)`,
+        radio_flux: p.radio_flux ?? null,
+        radio_blackout_pct: blackoutVal,
+        radio_blackout_label: `${blackoutVal}% R1–R2`,
+        r3_or_greater: p.r3_or_greater ?? "1%",
+        source: p.source ?? "LSTM + Ap from Kp + fixed extras",
+        raw: { id: p._id ?? p.id ?? null, original: p },
+      };
+    });
+  }
+
+  // FALLBACK PATH: treat docs as having daily_avg_kp_next3days arrays
   const days = Math.max(
     ...preds.map((p) =>
       Array.isArray(p.daily_avg_kp_next3days)
@@ -90,9 +159,13 @@ function normalizePredictions(raw = {}) {
         : 0
     )
   );
-  if (!days) return [];
+  if (!days) {
+    // No daily arrays and not day-docs -> log and return empty
+    console.info("[api] normalizePredictions: no daily arrays found and not day-docs");
+    return [];
+  }
 
-  // Prefer earliest date available across preds (safer than using preds[0])
+  // Prefer earliest date across docs (if present)
   let earliestDate = null;
   for (const p of preds) {
     const cand = p.date || p.forecast_date || p.timestamp || null;
@@ -102,25 +175,21 @@ function normalizePredictions(raw = {}) {
       if (!earliestDate || d < earliestDate) earliestDate = d;
     }
   }
-  // fallback to today if somehow no date present
   const baseDate = earliestDate ? new Date(earliestDate) : new Date();
 
   const result = [];
   for (let i = 0; i < days; i++) {
     const vals = preds.map((p) =>
-      Array.isArray(p.daily_avg_kp_next3days)
-        ? p.daily_avg_kp_next3days[i]
-        : null
+      Array.isArray(p.daily_avg_kp_next3days) ? p.daily_avg_kp_next3days[i] : null
     );
     const kpVal = avg(vals);
 
-    // Make a UTC date for the ith day (preserve date-of-day only)
+    // Make a UTC-only date for the ith day
     const d = new Date(Date.UTC(baseDate.getUTCFullYear(), baseDate.getUTCMonth(), baseDate.getUTCDate()));
     d.setUTCDate(d.getUTCDate() + i);
 
-    // Fixed dummy values
-    const solarVal = 1; // always 1%
-    const blackoutVal = 35; // always 35%
+    const solarVal = 1;
+    const blackoutVal = 35;
 
     const apVal = kpVal !== null ? kpToAp(kpVal) : null;
     if (kpVal !== null && apVal === null) {
@@ -130,15 +199,13 @@ function normalizePredictions(raw = {}) {
     result.push({
       date: d.toISOString().slice(0, 10),
       kp_index: kpVal !== null ? Math.round(kpVal * 100) / 100 : null,
-      // Provide both common names for Ap
       a_index: apVal,
       ap: apVal,
-      // keep consistent naming with backend if you rely on *_pct
       solar_radiation_pct: solarVal,
-      solar_radiation_label: "1% (Minor)",
+      solar_radiation_label: `${solarVal}% (Minor)`,
       radio_flux: null,
       radio_blackout_pct: blackoutVal,
-      radio_blackout_label: "35% R1–R2",
+      radio_blackout_label: `${blackoutVal}% R1–R2`,
       r3_or_greater: "1%",
       source: "LSTM + Ap from Kp + fixed extras",
       raw: preds.map((p) => ({ id: p._id ?? p.id ?? null, date: p.date ?? p.forecast_date ?? null })),
