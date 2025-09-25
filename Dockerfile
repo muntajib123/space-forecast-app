@@ -1,20 +1,22 @@
-FROM python:3.11-slim
+﻿FROM python:3.10-slim-bullseye
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+ && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-ENV PYTHONDONTWRITEBYTECODE 1
-ENV PYTHONUNBUFFERED 1
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
 
-# Install dependencies
-COPY requirements.txt /app/
+COPY ./backend/requirements.txt /app/requirements.txt
+RUN pip install --upgrade pip setuptools wheel
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
-# Copy entire repo, then set workdir to backend where manage.py and forecast_project live
-COPY . /app/
-WORKDIR /app/backend
+COPY ./backend /app/backend
 
-# collectstatic (won't fail if no static)
-RUN python manage.py collectstatic --noinput || true
+RUN python /app/backend/manage.py collectstatic --noinput || true
 
-# Run gunicorn against the Django project inside backend
-CMD ["gunicorn", "forecast_project.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "3"]
+EXPOSE 8000
+
+CMD ["sh", "-c", "python /app/backend/manage.py migrate --noinput && gunicorn forecast_project.wsgi:application --chdir /app/backend --bind 0.0.0.0:8000 --workers 3"]
