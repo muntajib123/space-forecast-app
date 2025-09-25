@@ -1,9 +1,9 @@
 ﻿// frontend/src/api.js
 // Robust fetch helper for 3-day forecast.
-// - Accepts multiple backend shapes (array-of-day-docs OR docs-with-daily-arrays)
+// - Accepts multiple backend shapes
 // - Ap Index derived from fractional Kp Index (thirds-aware) if backend missing
-// - Force Solar Radiation = 1%
-// - Force Radio Blackout = R1-R2: 35%, R3 or greater: 1%
+// - Force Solar Radiation = [1], solar_radiation_pct = 1
+// - Force Radio Blackout = { "R1-R2": 35, "R3 or greater": 1 }
 
 const RAW_API_BASE = process.env.REACT_APP_API_BASE || "";
 const API_BASE = String(RAW_API_BASE).replace(/\/+$/, "");
@@ -79,11 +79,15 @@ function padOrTruncateKpArray(arr) {
   return out;
 }
 
-// Given an array of 8 fractional Kp values, compute ap (average of 8 ap-values -> rounded)
+// CORRECT Ap computation: convert EACH of the 8 Kp values to ap via AP lookup then average those 8 ap values.
 function computeApFromKpArray(kpArray) {
   const kp8 = padOrTruncateKpArray(kpArray);
-  const apVals = kp8.map((k) => kpToApSingle(k) ?? 0);
-  const avgAp = apVals.reduce((s, v) => s + v, 0) / apVals.length;
+  const apVals = kp8.map((k) => {
+    const a = kpToApSingle(k);
+    return a === null ? 0 : a;
+  });
+  const sum = apVals.reduce((s, v) => s + v, 0);
+  const avgAp = sum / apVals.length;
   return Math.round(avgAp);
 }
 
@@ -94,7 +98,6 @@ function normalizeResponse(json) {
   if (Array.isArray(json)) return json;
 
   if (typeof json === "object") {
-    // common wrapper names
     if (Array.isArray(json.data)) {
       console.info("[api] normalizeResponse: using json.data array");
       return json.data;
@@ -107,14 +110,12 @@ function normalizeResponse(json) {
       console.info("[api] normalizeResponse: using json.results array");
       return json.results;
     }
-    // first array field we find
     for (const k of Object.keys(json)) {
       if (Array.isArray(json[k])) {
         console.info(`[api] normalizeResponse: using first array found under key='${k}'`);
         return json[k];
       }
     }
-    // numeric keys -> object like { "0": {...}, "1": {...} }
     const numKeys = Object.keys(json).filter((k) => /^[0-9]+$/.test(k)).sort((a,b) => Number(a)-Number(b));
     if (numKeys.length) {
       const arr = numKeys.map((k) => json[k]);
@@ -127,40 +128,58 @@ function normalizeResponse(json) {
   return [];
 }
 
+// Build 3 placeholder quiet days (used when backend fails / returns nothing)
+function buildPlaceholderThreeDays() {
+  const today = new Date();
+  const base = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
+  const SOLAR_PCT = 1;
+  const BLACKOUT_R1R2_PCT = 35;
+  const BLACKOUT_R3_PCT = 1;
+  const placeholderKp = Array(8).fill(3.0);
+  const ap = computeApFromKpArray(placeholderKp);
+
+  const res = [];
+  for (let i = 0; i < 3; i++) {
+    const d = new Date(base.getTime());
+    d.setUTCDate(d.getUTCDate() + i);
+    res.push({
+      date: d.toISOString().slice(0, 10),
+      kp_index: placeholderKp.slice(),
+      kp_avg: 3.0,
+      a_index: ap,
+      ap: ap,
+      solar_radiation: [1],
+      solar_radiation_pct: SOLAR_PCT,
+      solar_radiation_label: `${SOLAR_PCT}% (Forced)`,
+      radio_flux: null,
+      radio_blackout: { "R1-R2": BLACKOUT_R1R2_PCT, "R3 or greater": BLACKOUT_R3_PCT },
+      radio_blackout_pct: BLACKOUT_R1R2_PCT,
+      radio_blackout_r3_pct: BLACKOUT_R3_PCT,
+      radio_blackout_label: `R1-R2: ${BLACKOUT_R1R2_PCT}%, R3+: ${BLACKOUT_R3_PCT}%`,
+      r3_or_greater: `${BLACKOUT_R3_PCT}%`,
+      source: "placeholder",
+      raw: [],
+    });
+  }
+  return res;
+}
+
 // ============================================================================
 // Full normalizer - returns an array of EXACTLY 3 day objects suitable for the UI
-// Each row includes:
-//   date (YYYY-MM-DD), kp_index (array of 8 numbers), kp_avg (number),
-//   a_index (int), ap (int), solar_radiation_pct, solar_radiation_label,
-//   radio_flux, radio_blackout_pct, radio_blackout_label, r3_or_greater, source, raw
 // ============================================================================
 
 function normalizePredictions(raw = {}) {
   const preds = Array.isArray(raw) ? raw : normalizeResponse(raw);
   console.info("[api] normalizePredictions: input preds length =", Array.isArray(preds) ? preds.length : typeof preds);
 
-  // If nothing useful, return 3 placeholder days (quiet defaults) to avoid Array(0)
   if (!Array.isArray(preds) || preds.length === 0) {
     console.warn("[api] normalizePredictions: no predictions found — returning 3 quiet placeholders");
     return buildPlaceholderThreeDays();
   }
 
   // detect whether docs contain per-day arrays (daily_avg_kp_next3days etc.)
-  const hasDailyArrays = preds.some((p) => Array.isArray(p.daily_avg_kp_next3days) || Array.isArray(p.kp_index) && p.kp_index.length > 1);
-  const treatsAsPerDay = !hasDailyArrays; // if there are NO daily arrays, treat each doc as one day
-
-  // compute daysCount based on arrays if present, otherwise use number of docs (but cap at 3)
-  let daysCount = 3;
-  if (treatsAsPerDay) {
-    daysCount = Math.min(3, preds.length);
-  } else {
-    const candidateCounts = preds.map((p) => {
-      if (Array.isArray(p.daily_avg_kp_next3days)) return p.daily_avg_kp_next3days.length;
-      if (Array.isArray(p.kp_index)) return p.kp_index.length;
-      return 0;
-    });
-    daysCount = Math.min(3, Math.max(...candidateCounts, 0) || 3);
-  }
+  const hasDailyArrays = preds.some((p) => Array.isArray(p.daily_avg_kp_next3days) || (Array.isArray(p.kp_index) && p.kp_index.length > 1));
+  const treatsAsPerDay = !hasDailyArrays;
 
   // pick earliest date present across docs (safe baseline), keep as UTC-midnight
   let earliestDate = null;
@@ -186,7 +205,6 @@ function normalizePredictions(raw = {}) {
     let kpArrayForDay = null;
 
     if (treatsAsPerDay) {
-      // If we're treating each doc as a day, pick the doc at same index if present
       const doc = preds[i] ?? preds[0];
       if (doc) {
         if (Array.isArray(doc.kp_index) && doc.kp_index.length >= 1) kpArrayForDay = doc.kp_index;
@@ -194,8 +212,6 @@ function normalizePredictions(raw = {}) {
         else if (doc.kp_value != null) kpArrayForDay = [doc.kp_value];
       }
     } else {
-      // Docs contain arrays: try to extract element i from a doc that has arrays
-      // Prefer daily_avg_kp_next3days first
       let found = false;
       for (const p of preds) {
         if (Array.isArray(p.daily_avg_kp_next3days) && p.daily_avg_kp_next3days.length > i && p.daily_avg_kp_next3days[i] != null) {
@@ -207,15 +223,12 @@ function normalizePredictions(raw = {}) {
       if (!found) {
         for (const p of preds) {
           if (Array.isArray(p.kp_index) && p.kp_index.length > i && p.kp_index[i] != null) {
-            // if kp_index is an array of per-hour values for multiple days we can't reliably parse here,
-            // but treat p.kp_index[i] as a per-day average candidate
             kpArrayForDay = [p.kp_index[i]];
             found = true;
             break;
           }
         }
       }
-      // fallback: if none above, try to average entire kp_index arrays across docs for index i position
       if (!found) {
         const cand = preds.map((p) => {
           if (Array.isArray(p.kp_index) && p.kp_index.length) return avg(p.kp_index);
@@ -236,7 +249,6 @@ function normalizePredictions(raw = {}) {
     // Find provided a_index/ap if backend supplies them (per-day or arrays)
     let providedA = null;
     let providedAp = null;
-    // If treatsAsPerDay, check that single doc's fields. Otherwise check arrays / first doc with arrays.
     if (treatsAsPerDay) {
       const p = preds[i] ?? preds[0];
       if (p) {
@@ -246,7 +258,6 @@ function normalizePredictions(raw = {}) {
         if (Array.isArray(p.ap) && p.ap[i] != null) providedAp = Number(p.ap[i]);
       }
     } else {
-      // search any doc for arrays/values matching this day
       for (const p of preds) {
         if (p == null) continue;
         if (p.ap != null && !Array.isArray(p.ap)) providedAp = Number(p.ap);
@@ -256,7 +267,7 @@ function normalizePredictions(raw = {}) {
       }
     }
 
-    // compute ap from kp array
+    // compute ap correctly from the full kp8 array (not from avg)
     const apFromKp = computeApFromKpArray(kp8);
 
     const finalAp = providedAp != null ? providedAp : apFromKp;
@@ -287,17 +298,18 @@ function normalizePredictions(raw = {}) {
 
     out.push({
       date: isoYMD,
-      // keep full kp array for UI (8 values)
       kp_index: kp8,
       kp_avg: kpAvg,
-      // a_index and ap (use backend if provided else computed)
       a_index: finalA,
       ap: finalAp,
       // forced solar & radio blackout fields
+      solar_radiation: [1],
       solar_radiation_pct: SOLAR_PCT,
       solar_radiation_label: `${SOLAR_PCT}% (Forced)`,
       radio_flux: radioFluxVal,
+      radio_blackout: { "R1-R2": BLACKOUT_R1R2_PCT, "R3 or greater": BLACKOUT_R3_PCT },
       radio_blackout_pct: BLACKOUT_R1R2_PCT,
+      radio_blackout_r3_pct: BLACKOUT_R3_PCT,
       radio_blackout_label: `R1-R2: ${BLACKOUT_R1R2_PCT}%, R3+: ${BLACKOUT_R3_PCT}%`,
       r3_or_greater: `${BLACKOUT_R3_PCT}%`,
       source: (dayDoc && (dayDoc.source || dayDoc._source || dayDoc.source_name)) ? (dayDoc.source || dayDoc._source || dayDoc.source_name) : "LSTM + Ap from Kp + forced extras",
@@ -307,39 +319,6 @@ function normalizePredictions(raw = {}) {
 
   console.info("[api] normalizePredictions: produced", out.length, "rows");
   return out;
-}
-
-// Build 3 placeholder quiet days (used when backend fails / returns nothing)
-function buildPlaceholderThreeDays() {
-  const today = new Date();
-  const base = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
-  const SOLAR_PCT = 1;
-  const BLACKOUT_R1R2_PCT = 35;
-  const BLACKOUT_R3_PCT = 1;
-  const placeholderKp = Array(8).fill(3.0);
-  const ap = computeApFromKpArray(placeholderKp);
-
-  const res = [];
-  for (let i = 0; i < 3; i++) {
-    const d = new Date(base.getTime());
-    d.setUTCDate(d.getUTCDate() + i);
-    res.push({
-      date: d.toISOString().slice(0, 10),
-      kp_index: placeholderKp.slice(),
-      kp_avg: 3.0,
-      a_index: ap,
-      ap: ap,
-      solar_radiation_pct: SOLAR_PCT,
-      solar_radiation_label: `${SOLAR_PCT}% (Forced)`,
-      radio_flux: null,
-      radio_blackout_pct: BLACKOUT_R1R2_PCT,
-      radio_blackout_label: `R1-R2: ${BLACKOUT_R1R2_PCT}%, R3+: ${BLACKOUT_R3_PCT}%`,
-      r3_or_greater: `${BLACKOUT_R3_PCT}%`,
-      source: "placeholder",
-      raw: [],
-    });
-  }
-  return res;
 }
 
 // ============================================================================
