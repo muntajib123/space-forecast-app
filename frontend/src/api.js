@@ -1,9 +1,9 @@
 // frontend/src/api.js
 // Robust fetch helper for 3-day forecast.
-// ✅ Accepts multiple backend shapes (array-of-day-docs OR docs-with-daily-arrays)
-// ✅ Ap Index derived from fractional Kp Index (thirds-aware)
-// ✅ Fixed Solar Radiation = 1%
-// ✅ Fixed Radio Blackout = 35% (with labels for graphs + summary)
+// - Accepts multiple backend shapes (array-of-day-docs OR docs-with-daily-arrays)
+// - Ap Index derived from fractional Kp Index (thirds-aware)
+// - Fixed Solar Radiation = 1%
+// - Fixed Radio Blackout = 35% (with labels for graphs + summary)
 
 // ============================================================================
 // Base setup
@@ -31,7 +31,7 @@ const makeEndpoints = () => {
 };
 
 // ============================================================================
-// Helpers
+// Small helpers (define before use to avoid runtime ordering problems)
 // ============================================================================
 function avg(nums = []) {
   const filtered = nums.filter(
@@ -41,12 +41,34 @@ function avg(nums = []) {
   return filtered.reduce((a, b) => a + Number(b), 0) / filtered.length;
 }
 
+function avgNums(arr) {
+  if (!Array.isArray(arr) || !arr.length) return null;
+  const nums = arr
+    .map((n) => (n === null || n === undefined ? NaN : Number(n)))
+    .filter((x) => !Number.isNaN(x));
+  if (!nums.length) return null;
+  return nums.reduce((a, b) => a + b, 0) / nums.length;
+}
+
+function findFirst(arr, fn) {
+  for (const x of arr) {
+    try {
+      const v = fn(x);
+      if (v !== null && v !== undefined) return v;
+    } catch {}
+  }
+  return null;
+}
+
 // Convert Kp → Ap using a thirds lookup (index = round(kp * 3))
+// Keeps fractional Kp (like 3.33 / 3.67) accurate
 function kpToAp(kp) {
   if (kp === null || kp === undefined) return null;
   const kpf = Number(kp);
   if (Number.isNaN(kpf)) return null;
 
+  // AP lookup for Kp in thirds: index = round(kp * 3)
+  // indices 0..27 correspond to Kp = 0.00, 0.33, 0.67, 1.00, ... up to 9.00
   const AP_LOOKUP = [
      0,  2,  3,  4,  5,  6,  7,  9, 12, 15, 18, 22, 27, 32,
     39, 48, 56, 67, 80, 94,111,132,154,179,207,236,300,400
@@ -73,7 +95,7 @@ function normalizeResponse(json) {
 }
 
 // ============================================================================
-// Robust Normalizer (updated to accept kp_index arrays and prefer backend a_index)
+// Robust Normalizer (uses avgNums & findFirst defined above)
 // ============================================================================
 function normalizePredictions(raw = {}) {
   const preds = Array.isArray(raw) ? raw : normalizeResponse(raw);
@@ -86,14 +108,7 @@ function normalizePredictions(raw = {}) {
   const SOLAR_VAL = 1;
   const BLACKOUT_VAL = 35;
 
-  const avgNums = (arr) => {
-    if (!Array.isArray(arr) || !arr.length) return null;
-    const nums = arr.map((n) => (n === null || n === undefined ? NaN : Number(n))).filter((x) => !Number.isNaN(x));
-    if (!nums.length) return null;
-    return nums.reduce((a, b) => a + b, 0) / nums.length;
-  };
-
-  // --- Branch A: one-doc-per-day shape (or small array) ---
+  // --- Branch A: one-doc-per-day shape (including kp_index arrays) ---
   const looksLikeDayDocs = preds.length <= 7 && preds.every((p) => {
     if (!p) return false;
     return (
@@ -122,8 +137,10 @@ function normalizePredictions(raw = {}) {
       }
 
       // Prefer backend Ap/a_index if present; otherwise derive from kpVal
-      const apValBackend = p.ap ?? p.a_index ?? null;
-      const apVal = (apValBackend !== null && apValBackend !== undefined) ? apValBackend : (kpVal != null && !Number.isNaN(kpVal) ? kpToAp(kpVal) : null);
+      const apValBackend = (p.ap !== undefined && p.ap !== null) ? p.ap : (p.a_index !== undefined ? p.a_index : null);
+      const apVal = (apValBackend !== null && apValBackend !== undefined)
+        ? apValBackend
+        : (kpVal != null && !Number.isNaN(kpVal) ? kpToAp(kpVal) : null);
 
       // date resolution
       let dateStr = p.date ?? p.forecast_date ?? null;
@@ -145,11 +162,9 @@ function normalizePredictions(raw = {}) {
 
       return {
         date: dateStr,
-        // round KP to 2 decimals for display
         kp_index: kpVal !== null && !Number.isNaN(kpVal) ? Math.round(kpVal * 100) / 100 : null,
         a_index: apVal,
         ap: apVal,
-        // force the fixed dummy values (do not pass backend variants through)
         solar_radiation_pct: SOLAR_VAL,
         solar_radiation_label: "1% (Minor)",
         radio_flux: p.radio_flux ?? null,
@@ -198,7 +213,10 @@ function normalizePredictions(raw = {}) {
     d.setUTCDate(d.getUTCDate() + i);
 
     // prefer backend ap/a_index first (if any doc has it), else derive
-    const apFromBackend = findFirst(preds, (p) => p.ap ?? p.a_index ?? null);
+    const apFromBackend = findFirst(preds, (p) => {
+      if (!p) return null;
+      return p.ap ?? p.a_index ?? null;
+    });
     const apVal = apFromBackend !== null ? apFromBackend : (kpVal !== null ? kpToAp(kpVal) : null);
 
     result.push({
@@ -219,13 +237,61 @@ function normalizePredictions(raw = {}) {
   return result;
 }
 
-// small helper used above: find first non-null ap/a_index in preds
-function findFirst(arr, fn) {
-  for (const x of arr) {
+// ============================================================================
+// Fetch function
+// ============================================================================
+export default async function fetch3DayForecast({ timeoutMs = 15000 } = {}) {
+  const endpoints = makeEndpoints();
+
+  for (const url of endpoints) {
+    console.info("[api] fetching", url);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+
     try {
-      const v = fn(x);
-      if (v !== null && v !== undefined) return v;
-    } catch {}
+      const res = await fetch(url, {
+        method: "GET",
+        headers: { Accept: "application/json" },
+        cache: "no-store",
+        signal: controller.signal,
+      });
+
+      clearTimeout(timer);
+
+      if (!res.ok) {
+        const statusText = `${res.status} ${res.statusText || ""}`.trim();
+        let bodyPreview = "";
+        try {
+          bodyPreview = await res.text();
+          if (bodyPreview.length > 500) bodyPreview = bodyPreview.slice(0, 500) + "…";
+        } catch {}
+        console.warn(
+          `[api] non-ok response from ${url}: ${statusText}`,
+          bodyPreview ? `| preview: ${bodyPreview}` : ""
+        );
+        continue;
+      }
+
+      let json;
+      try {
+        json = await res.json();
+      } catch (e) {
+        console.warn(`[api] failed to parse JSON from ${url}:`, e.message);
+        continue;
+      }
+
+      console.info("[api] raw json:", json);
+
+      const normalized = normalizePredictions(json);
+      console.info("[api] normalized items preview:", normalized);
+
+      return normalized;
+    } catch (err) {
+      clearTimeout(timer);
+      console.warn(`[api] fetch error for ${url}:`, err.message || err);
+    }
   }
-  return null;
+
+  console.warn("[api] all endpoint variants failed — returning empty array");
+  return [];
 }
