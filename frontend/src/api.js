@@ -1,8 +1,8 @@
 ﻿// frontend/src/api.js
-// Robust fetch helper for 3-day forecast.
-// - Ap Index derived from fractional Kp Index (thirds-aware)
-// - Force Solar Radiation = 1%
-// - Force Radio Blackout = R1-R2: 35%, R3 or greater: 1%
+// Fetch + normalizer for 3-day forecast
+// - Accepts different backend shapes
+// - Computes Ap from fractional Kp (thirds-aware) when appropriate
+// - Forces Solar Radiation = 1% and Radio Blackout R1-R2 = 35%, R3+ = 1%
 
 // ============================================================================
 // Base setup
@@ -30,38 +30,20 @@ const makeEndpoints = () => {
 };
 
 // ============================================================================
+// Constants (forced values requested)
+// ============================================================================
+const SOLAR_PCT_FORCED = 1;   // 1%
+const BLACKOUT_R12_FORCED = 35; // 35% R1–R2
+const BLACKOUT_R3_FORCED = 1;   // 1% R3 or greater
+
+// ============================================================================
 // Helpers
 // ============================================================================
-function safeNum(v) {
-  if (v === null || v === undefined) return null;
-  const n = Number(v);
-  return Number.isNaN(n) ? null : n;
-}
-function avg(arr) {
-  if (!Array.isArray(arr) || !arr.length) return null;
-  const nums = arr.map((x) => safeNum(x)).filter((n) => n !== null);
+function avgNums(arr = []) {
+  if (!Array.isArray(arr) || arr.length === 0) return null;
+  const nums = arr.map((n) => (n === null || n === undefined ? NaN : Number(n))).filter((x) => !Number.isNaN(x));
   if (!nums.length) return null;
   return nums.reduce((a, b) => a + b, 0) / nums.length;
-}
-
-// Convert Kp → Ap using thirds lookup (index = round(kp * 3))
-// returns null if kp invalid
-function kpToAp(kp) {
-  if (kp === null || kp === undefined) return null;
-  const kpf = Number(kp);
-  if (Number.isNaN(kpf)) return null;
-
-  // NOAA-like AP lookup for Kp in thirds:
-  // indices 0..27 correspond to Kp = 0.00, 0.33, 0.67, 1.00, ..., 9.00
-  const AP_LOOKUP = [
-     0,  2,  3,  4,  5,  6,  7,  9, 12, 15, 18, 22, 27, 32,
-    39, 48, 56, 67, 80, 94,111,132,154,179,207,236,300,400
-  ];
-
-  let index = Math.round(kpf * 3);
-  if (index < 0) index = 0;
-  if (index > AP_LOOKUP.length - 1) index = AP_LOOKUP.length - 1;
-  return AP_LOOKUP[index];
 }
 
 function normalizeResponse(json) {
@@ -78,30 +60,41 @@ function normalizeResponse(json) {
   return [];
 }
 
+// Convert Kp → Ap using a thirds lookup (index = round(kp * 3))
+// indices 0..27 for Kp 0.00, 0.33, 0.67, 1.00, ... 9.00
+function kpToAp(kp) {
+  if (kp === null || kp === undefined) return null;
+  const kpf = Number(kp);
+  if (Number.isNaN(kpf)) return null;
+
+  const AP_LOOKUP = [
+     0,  2,  3,  4,  5,  6,  7,  9, 12, 15, 18, 22, 27, 32,
+    39, 48, 56, 67, 80, 94,111,132,154,179,207,236,300,400
+  ];
+
+  let index = Math.round(kpf * 3);
+  if (index < 0) index = 0;
+  if (index > AP_LOOKUP.length - 1) index = AP_LOOKUP.length - 1;
+  return AP_LOOKUP[index];
+}
+
 // ============================================================================
 // Normalizer
 // ============================================================================
-// Takes backend response (various shapes) and returns an array of per-day
-// normalized objects with fields the frontend expects.
+// This function returns an array of per-day objects:
+// { date, kp_index, a_index, ap, solar_radiation_pct, solar_radiation_label, radio_blackout_pct, radio_blackout_label, radio_flux, ... }
 function normalizePredictions(raw = {}) {
   const preds = Array.isArray(raw) ? raw : normalizeResponse(raw);
   if (!Array.isArray(preds) || !preds.length) return [];
 
-  // Force values requested
-  const SOLAR_PCT = 1;           // 1%
-  const RADIO_R1R2 = 35;        // 35%
-  const RADIO_R3PLUS = 1;       // 1%
+  // Determine if docs contain per-day arrays (daily_avg_kp_next3days) or are one-doc-per-day
+  const anyDailyArrays = preds.some((p) => Array.isArray(p.daily_avg_kp_next3days) || Array.isArray(p.kp_index));
+  const treatsAsPerDay = !anyDailyArrays && preds.length > 0; // one document per day
+  const days = treatsAsPerDay ? preds.length : Math.max(...preds.map((p) => (Array.isArray(p.daily_avg_kp_next3days) ? p.daily_avg_kp_next3days.length : 0)));
+  const maxDays = Math.max(0, days);
+  if (!maxDays) return [];
 
-  // determine if docs contain daily arrays
-  const daysFromArrays = Math.max(
-    0,
-    ...preds.map((p) => (Array.isArray(p.daily_avg_kp_next3days) ? p.daily_avg_kp_next3days.length : 0))
-  );
-
-  const treatsAsPerDay = daysFromArrays === 0 && preds.length > 0;
-  const maxDays = treatsAsPerDay ? preds.length : (daysFromArrays || 3);
-
-  // choose earliest date across docs to anchor date-only rows
+  // pick earliest date available across documents (safe baseline)
   let earliestDate = null;
   for (const p of preds) {
     const cand = p.date || p.forecast_date || p.timestamp || null;
@@ -113,83 +106,89 @@ function normalizePredictions(raw = {}) {
   }
   const baseDate = earliestDate ? new Date(earliestDate) : new Date();
 
-  const out = [];
+  const result = [];
 
   for (let i = 0; i < maxDays; i++) {
-    // compute kp candidate values for this day
+    // collect candidate Kp values (from daily_avg_kp_next3days OR kp_index arrays/fallback)
     const kpCandidates = preds.map((p, idx) => {
       if (treatsAsPerDay) {
         if (idx !== i) return null;
-        // per-day doc: prefer daily_avg_kp_next3days[0] if present, else avg(kp_index) if present
-        if (Array.isArray(p.daily_avg_kp_next3days) && p.daily_avg_kp_next3days.length) return safeNum(p.daily_avg_kp_next3days[0]);
-        if (Array.isArray(p.kp_index) && p.kp_index.length) return avg(p.kp_index);
-        if (p.kp_value != null) return safeNum(p.kp_value);
+        if (Array.isArray(p.daily_avg_kp_next3days)) return p.daily_avg_kp_next3days[0] ?? null;
+        if (Array.isArray(p.kp_index)) return avgNums(p.kp_index);
+        if (p.kp_value != null) return Number(p.kp_value);
         return null;
       } else {
-        // docs with arrays: take p.daily_avg_kp_next3days[i] if present
-        if (Array.isArray(p.daily_avg_kp_next3days) && p.daily_avg_kp_next3days.length > i) {
-          return safeNum(p.daily_avg_kp_next3days[i]);
-        }
-        // fallback: if p.kp_index is array, average it (approx per-doc)
-        if (Array.isArray(p.kp_index) && p.kp_index.length) return avg(p.kp_index);
+        if (Array.isArray(p.daily_avg_kp_next3days)) return p.daily_avg_kp_next3days[i] ?? null;
+        if (Array.isArray(p.kp_index)) return avgNums(p.kp_index);
+        if (p.kp_value != null) return Number(p.kp_value);
         return null;
       }
     });
 
-    const kpVal = avg(kpCandidates);
+    const kpVal = avgNums(kpCandidates);
 
-    // compute date for this row (UTC date-only)
-    const rowDate = new Date(Date.UTC(baseDate.getUTCFullYear(), baseDate.getUTCMonth(), baseDate.getUTCDate()));
-    rowDate.setUTCDate(rowDate.getUTCDate() + i);
+    // date for this row (UTC date-only)
+    const d = new Date(Date.UTC(baseDate.getUTCFullYear(), baseDate.getUTCMonth(), baseDate.getUTCDate()));
+    d.setUTCDate(d.getUTCDate() + i);
 
-    // Ap: prefer backend-provided a_index/ap if exists for this day, else compute
-    let providedA = null;
-    let providedAp = null;
+    // Prefer computed Ap based on Kp (kpToAp). Use backend-provided ap/a_index only if computed missing.
+    const computedAp = kpVal != null ? kpToAp(kpVal) : null;
+
+    // Search for any explicit ap / a_index supplied for this day
+    let explicitAp = null;
+    let explicitAIndex = null;
     for (let j = 0; j < preds.length; j++) {
       const p = preds[j];
       if (treatsAsPerDay && j !== i) continue;
 
-      // direct scalar
-      if (p.a_index != null && providedA == null) providedA = safeNum(p.a_index);
-      if (p.ap != null && providedAp == null) providedAp = safeNum(p.ap);
+      // if arrays present, try element [i]
+      if (Array.isArray(p.ap) && p.ap[i] != null) explicitAp = Number(p.ap[i]);
+      if (Array.isArray(p.a_index) && p.a_index[i] != null) explicitAIndex = Number(p.a_index[i]);
 
-      // array entries
-      if (Array.isArray(p.a_index) && p.a_index.length > i && providedA == null) providedA = safeNum(p.a_index[i]);
-      if (Array.isArray(p.ap) && p.ap.length > i && providedAp == null) providedAp = safeNum(p.ap[i]);
+      if (p.ap != null && !Array.isArray(p.ap)) explicitAp = Number(p.ap);
+      if (p.a_index != null && !Array.isArray(p.a_index)) explicitAIndex = Number(p.a_index);
     }
 
-    const apComputed = kpVal != null ? kpToAp(kpVal) : null;
-    const finalAp = providedAp != null ? providedAp : apComputed;
-    const finalAIndex = providedA != null ? providedA : finalAp;
+    // choose final ap/a_index: prefer computedAp (kp-derived) if available, else use explicit values
+    const finalAp = computedAp != null ? computedAp : (explicitAp != null ? explicitAp : null);
+    const finalAIndex = explicitAIndex != null ? explicitAIndex : (finalAp != null ? finalAp : null);
 
-    // Build radio/solar forced values (user requested these hard-coded)
-    const radioObj = {
-      "R1-R2": RADIO_R1R2,
-      "R3 or greater": RADIO_R3PLUS,
-    };
+    // Determine a "dayDoc" to pull other fields (solar, radio) if present
+    let dayDoc = null;
+    if (treatsAsPerDay) {
+      dayDoc = preds[i] ?? preds[0];
+    } else {
+      dayDoc = preds.find((p) => Array.isArray(p.daily_avg_kp_next3days) || Array.isArray(p.kp_index)) ?? preds[0];
+    }
 
-    out.push({
-      date: rowDate.toISOString().slice(0, 10),
-      // keep kp_index as numeric (rounded)
+    // Forcing solar & radio per your request (solar=1%, R1-R2=35%, R3+=1)
+    const solarPct = SOLAR_PCT_FORCED;
+    const blackoutPct = BLACKOUT_R12_FORCED;
+    const r3Pct = BLACKOUT_R3_FORCED;
+
+    // radio flux fallback (if you want to display radio_flux numeric, we keep it)
+    const radioFluxVal = dayDoc && Array.isArray(dayDoc.radio_flux) ? avgNums(dayDoc.radio_flux) : (dayDoc && (dayDoc.radio_flux ?? null));
+
+    const solar_label = `${solarPct}% (Minor)`;
+    const blackout_label = `R1-R2: ${blackoutPct}, R3+: ${r3Pct}`;
+
+    result.push({
+      date: d.toISOString().slice(0, 10),
       kp_index: kpVal != null ? Math.round(kpVal * 100) / 100 : null,
-      // both names available so frontend code can find whichever it expects
       a_index: finalAIndex != null ? finalAIndex : null,
       ap: finalAp != null ? finalAp : null,
-      // Solar: forced to 1%
-      solar_radiation: SOLAR_PCT,
-      solar_radiation_pct: SOLAR_PCT,
-      solar_radiation_label: `${SOLAR_PCT}% (Minor)`,
-      // Radio blackout forced as requested
-      radio_blackout: radioObj,
-      radio_blackout_pct: RADIO_R1R2, // main value for display column
-      radio_blackout_label: `R1-R2: ${RADIO_R1R2}%  |  R3+: ${RADIO_R3PLUS}%`,
-      r3_or_greater: `${RADIO_R3PLUS}%`,
-      source: "Fixed NOAA-style dummy values (solar=1%, radio=R1-R2:35%, R3+:1%)",
+      solar_radiation_pct: solarPct,
+      solar_radiation_label: solar_label,
+      radio_flux: radioFluxVal != null ? radioFluxVal : null,
+      radio_blackout_pct: blackoutPct,
+      radio_blackout_label: blackout_label,
+      r3_or_greater_pct: r3Pct,
+      source: dayDoc && dayDoc.source ? dayDoc.source : "LSTM + Ap from Kp + forced extras",
       raw: preds.map((p) => ({ id: p._id ?? p.id ?? null, original: p })),
     });
   }
 
-  return out;
+  return result;
 }
 
 // ============================================================================
@@ -214,7 +213,13 @@ export default async function fetch3DayForecast({ timeoutMs = 15000 } = {}) {
       clearTimeout(timer);
 
       if (!res.ok) {
-        console.warn(`[api] non-ok response from ${url}: ${res.status}`);
+        const statusText = `${res.status} ${res.statusText || ""}`.trim();
+        let bodyPreview = "";
+        try {
+          bodyPreview = await res.text();
+          if (bodyPreview.length > 500) bodyPreview = bodyPreview.slice(0, 500) + "…";
+        } catch {}
+        console.warn(`[api] non-ok response from ${url}: ${statusText}`, bodyPreview ? `| preview: ${bodyPreview}` : "");
         continue;
       }
 
@@ -222,17 +227,19 @@ export default async function fetch3DayForecast({ timeoutMs = 15000 } = {}) {
       try {
         json = await res.json();
       } catch (e) {
-        console.warn(`[api] failed to parse JSON from ${url}:`, e && e.message ? e.message : e);
+        console.warn(`[api] failed to parse JSON from ${url}:`, e.message);
         continue;
       }
 
       console.info("[api] raw json:", json);
+
       const normalized = normalizePredictions(json);
       console.info("[api] normalized items preview:", normalized);
+
       return normalized;
     } catch (err) {
       clearTimeout(timer);
-      console.warn(`[api] fetch error for ${url}:`, err && err.message ? err.message : err);
+      console.warn(`[api] fetch error for ${url}:`, err.message || err);
     }
   }
 
