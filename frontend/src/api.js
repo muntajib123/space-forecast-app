@@ -42,14 +42,11 @@ function avg(nums = []) {
 }
 
 // Convert Kp → Ap using a thirds lookup (index = round(kp * 3))
-// Keeps fractional Kp (like 3.33 / 3.67) accurate
 function kpToAp(kp) {
   if (kp === null || kp === undefined) return null;
   const kpf = Number(kp);
   if (Number.isNaN(kpf)) return null;
 
-  // AP lookup for Kp in thirds: index = round(kp * 3)
-  // indices 0..27 correspond to Kp = 0.00, 0.33, 0.67, 1.00, ... up to 9.00
   const AP_LOOKUP = [
      0,  2,  3,  4,  5,  6,  7,  9, 12, 15, 18, 22, 27, 32,
     39, 48, 56, 67, 80, 94,111,132,154,179,207,236,300,400
@@ -76,7 +73,7 @@ function normalizeResponse(json) {
 }
 
 // ============================================================================
-// Robust Normalizer (handles multiple backend shapes)
+// Robust Normalizer
 // ============================================================================
 function normalizePredictions(raw = {}) {
   const preds = Array.isArray(raw) ? raw : normalizeResponse(raw);
@@ -85,10 +82,13 @@ function normalizePredictions(raw = {}) {
     return [];
   }
 
-  // QUICK PATH: If preds look like one-doc-per-day (small array, each doc has a date or kp)
+  // --- Constants ---
+  const SOLAR_VAL = 1;
+  const BLACKOUT_VAL = 35;
+
+  // --- Branch A: one-doc-per-day shape ---
   const looksLikeDayDocs = preds.length <= 7 && preds.every((p) => {
     if (!p) return false;
-    // If it has an explicit per-day kp number or a date, treat as day-doc
     return (
       typeof p.kp === "number" ||
       typeof p.kp_index === "number" ||
@@ -102,7 +102,6 @@ function normalizePredictions(raw = {}) {
   if (looksLikeDayDocs) {
     console.info("[api] normalizePredictions: treating preds as one-doc-per-day");
     return preds.map((p, idx) => {
-      // try several kp sources (also support daily_avg_kp_next3days first element if present)
       let kpRaw = null;
       if (Array.isArray(p.daily_avg_kp_next3days) && p.daily_avg_kp_next3days.length) {
         kpRaw = p.daily_avg_kp_next3days[0];
@@ -112,7 +111,6 @@ function normalizePredictions(raw = {}) {
       const kpVal = kpRaw === null || kpRaw === undefined ? null : Number(kpRaw);
       const apVal = kpVal != null && !Number.isNaN(kpVal) ? kpToAp(kpVal) : null;
 
-      // date resolution: use doc date if present, otherwise infer from first doc
       let dateStr = p.date ?? p.forecast_date ?? null;
       if (!dateStr) {
         const base = preds[0] && (preds[0].date || preds[0].forecast_date);
@@ -122,7 +120,6 @@ function normalizePredictions(raw = {}) {
           d.setUTCDate(d.getUTCDate() + idx);
           dateStr = d.toISOString().slice(0, 10);
         } else {
-          // fallback to today + idx
           const d = new Date();
           d.setUTCDate(d.getUTCDate() + idx);
           dateStr = d.toISOString().slice(0, 10);
@@ -131,27 +128,24 @@ function normalizePredictions(raw = {}) {
         try { dateStr = new Date(dateStr).toISOString().slice(0, 10); } catch (e) {}
       }
 
-      const solarVal = p.solar_radiation_pct ?? p.solar_radiation ?? 1;
-      const blackoutVal = p.radio_blackout_pct ?? p.radio_blackout ?? 35;
-
       return {
         date: dateStr,
         kp_index: kpVal !== null && !Number.isNaN(kpVal) ? Math.round(kpVal * 100) / 100 : null,
         a_index: apVal,
         ap: apVal,
-        solar_radiation_pct: solarVal,
-        solar_radiation_label: `${solarVal}% (Minor)`,
-        radio_flux: p.radio_flux ?? null,
-        radio_blackout_pct: blackoutVal,
-        radio_blackout_label: `${blackoutVal}% R1–R2`,
-        r3_or_greater: p.r3_or_greater ?? "1%",
-        source: p.source ?? "LSTM + Ap from Kp + fixed extras",
+        solar_radiation_pct: SOLAR_VAL,
+        solar_radiation_label: "1% (Minor)",
+        radio_flux: null,
+        radio_blackout_pct: BLACKOUT_VAL,
+        radio_blackout_label: "35% R1–R2",
+        r3_or_greater: "1%",
+        source: "LSTM + Ap from Kp + fixed extras",
         raw: { id: p._id ?? p.id ?? null, original: p },
       };
     });
   }
 
-  // FALLBACK PATH: treat docs as having daily_avg_kp_next3days arrays
+  // --- Branch B: docs with daily_avg_kp_next3days arrays ---
   const days = Math.max(
     ...preds.map((p) =>
       Array.isArray(p.daily_avg_kp_next3days)
@@ -160,12 +154,10 @@ function normalizePredictions(raw = {}) {
     )
   );
   if (!days) {
-    // No daily arrays and not day-docs -> log and return empty
     console.info("[api] normalizePredictions: no daily arrays found and not day-docs");
     return [];
   }
 
-  // Prefer earliest date across docs (if present)
   let earliestDate = null;
   for (const p of preds) {
     const cand = p.date || p.forecast_date || p.timestamp || null;
@@ -184,28 +176,21 @@ function normalizePredictions(raw = {}) {
     );
     const kpVal = avg(vals);
 
-    // Make a UTC-only date for the ith day
     const d = new Date(Date.UTC(baseDate.getUTCFullYear(), baseDate.getUTCMonth(), baseDate.getUTCDate()));
     d.setUTCDate(d.getUTCDate() + i);
 
-    const solarVal = 1;
-    const blackoutVal = 35;
-
     const apVal = kpVal !== null ? kpToAp(kpVal) : null;
-    if (kpVal !== null && apVal === null) {
-      console.warn("[api] kpToAp gave null for kpVal:", kpVal);
-    }
 
     result.push({
       date: d.toISOString().slice(0, 10),
       kp_index: kpVal !== null ? Math.round(kpVal * 100) / 100 : null,
       a_index: apVal,
       ap: apVal,
-      solar_radiation_pct: solarVal,
-      solar_radiation_label: `${solarVal}% (Minor)`,
+      solar_radiation_pct: SOLAR_VAL,
+      solar_radiation_label: "1% (Minor)",
       radio_flux: null,
-      radio_blackout_pct: blackoutVal,
-      radio_blackout_label: `${blackoutVal}% R1–R2`,
+      radio_blackout_pct: BLACKOUT_VAL,
+      radio_blackout_label: "35% R1–R2",
       r3_or_greater: "1%",
       source: "LSTM + Ap from Kp + fixed extras",
       raw: preds.map((p) => ({ id: p._id ?? p.id ?? null, date: p.date ?? p.forecast_date ?? null })),
