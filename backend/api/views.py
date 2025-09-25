@@ -126,15 +126,15 @@ def forecast_3day(request):
 
         latest_noaa = _find_latest_noaa_date()
         if latest_noaa:
-            # NOAA product covers latest_noaa .. latest_noaa + 2 (3 days).
-            # Start the seeded forecast on the day AFTER that block: +3.
+            # NOAA covers latest_noaa .. latest_noaa+2
+            # Our forecasts must start AFTER that block → latest_noaa + 3
             start_date = latest_noaa + timedelta(days=3)
-            logger.info("Using start_date = day after NOAA 3-day block: %s", start_date.isoformat())
+            logger.info("Using start_date = NOAA+3: %s", start_date.isoformat())
         else:
-            # If we don't have a NOAA baseline doc, still enforce +3 from today
-            # (so frontend shows the day-after-NOAA window rather than overlapping NOAA).
+            # No NOAA baseline? Then just enforce today+3 (so we always point beyond current NOAA window)
             start_date = today_utc + timedelta(days=3)
-            logger.info("No NOAA baseline found; enforcing start_date = today + 3: %s", start_date.isoformat())
+            logger.info("No NOAA baseline found; using start_date = today+3: %s", start_date.isoformat())
+
 
         candidate_limit = 500
         cursor = collection.find({"date": {"$exists": True}}, projection=None).limit(candidate_limit)
