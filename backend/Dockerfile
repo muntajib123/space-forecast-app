@@ -1,4 +1,5 @@
-FROM python:3.10-slim
+# Use explicit Debian-based slim tag to avoid Docker Hub auth/redirect issues
+FROM python:3.10-slim-bullseye
 
 # install minimal build tools
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -18,10 +19,10 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 # Copy backend into /app/backend
 COPY ./backend /app/backend
 
-# collectstatic (use absolute path)
+# collectstatic (use absolute path); don't fail the build if collectstatic errors
 RUN python /app/backend/manage.py collectstatic --noinput || true
 
 EXPOSE 8000
 
-# On container start: use absolute path to manage.py so it always works
+# On container start: run migrations then start gunicorn
 CMD ["sh", "-c", "python /app/backend/manage.py migrate --noinput && gunicorn forecast_project.wsgi:application --chdir /app/backend --bind 0.0.0.0:8000 --workers 3"]
